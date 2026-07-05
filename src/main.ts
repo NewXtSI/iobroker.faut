@@ -5,9 +5,26 @@
 import * as utils from '@iobroker/adapter-core';
 import { type FautNodeConfig, type FautTreeNode } from './lib/treeTypes';
 
+/** Runtime configuration for a room’s presence/dark sensor logic. */
+interface RoomEntry {
+	relId:        string;
+	cooldownMs:   number;
+	dunkelgrenze: number;
+	motionDpIds:  string[];
+	luxDpIds:     string[];
+}
+
 class Faut extends utils.Adapter {
 	/** Maps a foreign state ID (source DP) to the relative ID of our own state. */
-	private readonly dpToStateMap = new Map<string, string>();
+	private readonly dpToStateMap    = new Map<string, string>();
+	/** Maps a motion DP ID to the room relIds that monitor it. */
+	private readonly dpToRoomsMotion = new Map<string, string[]>();
+	/** Maps a lux DP ID to the room relIds that monitor it. */
+	private readonly dpToRoomsLux    = new Map<string, string[]>();
+	/** Runtime entries for rooms with active presence/dark logic. */
+	private readonly roomEntries     = new Map<string, RoomEntry>();
+	/** Active cooldown timers, keyed by room relId. */
+	private readonly cooldownTimers  = new Map<string, ReturnType<typeof setTimeout>>();
 
 	public constructor(options: Partial<utils.AdapterOptions> = {}) {
 		super({
@@ -66,6 +83,9 @@ class Faut extends utils.Adapter {
 				this.log.warn(`Initial read failed for ${dpId}: ${(e as Error).message}`);
 			}
 		}
+
+		// Room presence / darkness logic
+		await this.setupRoomLogic(tree);
 	}
 
 	/**
@@ -89,6 +109,206 @@ class Faut extends utils.Adapter {
 
 			if (node.children?.length) this.collectDpMappings(node.children, relId);
 		}
+	}
+
+	// ---- room logic (presence + dark) ----
+
+	/**
+	 * Finds and subscribes room DPs, initialises initial states.
+	 * Called once from setupSensorSubscriptions.
+	 */
+	private async setupRoomLogic(tree: FautTreeNode[]): Promise<void> {
+		const globalLuxDpId = this.findGlobalLuxDp(tree);
+		this.collectRoomConfigs(tree, '', globalLuxDpId);
+
+		if (this.roomEntries.size === 0) return;
+
+		this.log.info(`Room logic active for ${this.roomEntries.size} room(s).`);
+
+		// Subscribe to all room-relevant DPs (overlapping with sensor subscriptions is idempotent)
+		for (const room of this.roomEntries.values()) {
+			for (const dpId of [...room.motionDpIds, ...room.luxDpIds]) {
+				this.subscribeForeignStates(dpId);
+			}
+		}
+
+		// Initialise states from current sensor values
+		for (const room of this.roomEntries.values()) {
+			await this.initRoomStates(room);
+		}
+	}
+
+	/** Walks the tree and populates roomEntries / dpToRoomsMotion / dpToRoomsLux. */
+	private collectRoomConfigs(nodes: FautTreeNode[], prefix: string, globalLuxDpId: string | null): void {
+		for (const node of nodes) {
+			const relId = prefix ? `${prefix}.${node.id}` : node.id;
+			const cfg = (node.config as FautNodeConfig | undefined) ?? {};
+
+			if (node.type === 'Raum' && (cfg.bewegungserkennung || cfg.dunkelheitserkennung)) {
+				const motionDpIds: string[] = [];
+				const luxDpIds:    string[] = [];
+
+				if (cfg.bewegungserkennung) {
+					this.findChildDpIds(node.children ?? [], 'Bewegung',   'dpBewegung', motionDpIds);
+				}
+				if (cfg.dunkelheitserkennung) {
+					if (cfg.globalenSensorBenutzen && globalLuxDpId) {
+						luxDpIds.push(globalLuxDpId);
+					} else {
+						this.findChildDpIds(node.children ?? [], 'Helligkeit', 'dpLux',      luxDpIds);
+					}
+				}
+
+				if (motionDpIds.length > 0 || luxDpIds.length > 0) {
+					const entry: RoomEntry = {
+						relId,
+						cooldownMs:   (cfg.bewegungsCooldown ?? 3) * 60_000,
+						dunkelgrenze: cfg.dunkelgrenze ?? 150,
+						motionDpIds,
+						luxDpIds,
+					};
+					this.roomEntries.set(relId, entry);
+
+					for (const dpId of motionDpIds) {
+						const arr = this.dpToRoomsMotion.get(dpId) ?? [];
+						arr.push(relId);
+						this.dpToRoomsMotion.set(dpId, arr);
+					}
+					for (const dpId of luxDpIds) {
+						const arr = this.dpToRoomsLux.get(dpId) ?? [];
+						arr.push(relId);
+						this.dpToRoomsLux.set(dpId, arr);
+					}
+				}
+			}
+
+			if (node.children?.length) this.collectRoomConfigs(node.children, relId, globalLuxDpId);
+		}
+	}
+
+	/** Recursively collects all DP IDs of child nodes matching targetType. */
+	private findChildDpIds(
+		nodes: FautTreeNode[],
+		targetType: string,
+		cfgKey: 'dpBewegung' | 'dpLux',
+		result: string[],
+	): void {
+		for (const node of nodes) {
+			if (node.type === targetType) {
+				const dpId = ((node.config as FautNodeConfig | undefined) ?? {})[cfgKey];
+				if (dpId) result.push(dpId);
+			}
+			if (node.children?.length) this.findChildDpIds(node.children, targetType, cfgKey, result);
+		}
+	}
+
+	/** Returns the dpLux of the first Helligkeit node with globalerSensor = true, or null. */
+	private findGlobalLuxDp(nodes: FautTreeNode[]): string | null {
+		for (const node of nodes) {
+			if (node.type === 'Helligkeit') {
+				const cfg = (node.config as FautNodeConfig | undefined) ?? {};
+				if (cfg.globalerSensor && cfg.dpLux) return cfg.dpLux;
+			}
+			if (node.children?.length) {
+				const found = this.findGlobalLuxDp(node.children);
+				if (found) return found;
+			}
+		}
+		return null;
+	}
+
+	/** Reads current sensor values and sets initial presence / dark states for a room. */
+	private async initRoomStates(room: RoomEntry): Promise<void> {
+		// Presence: check if any motion sensor is currently active
+		if (room.motionDpIds.length > 0) {
+			let anyActive = false;
+			for (const dpId of room.motionDpIds) {
+				try {
+					const s = await this.getForeignStateAsync(dpId);
+					if (s?.val === true) { anyActive = true; break; }
+				} catch { /* ignore */ }
+			}
+			// If in "cooldown" from a previous run but no timer is running → reset to absent
+			if (anyActive) {
+				await this.setStateAsync(`${room.relId}.presence`, { val: 'present', ack: true });
+			} else {
+				await this.setStateAsync(`${room.relId}.presence`, { val: 'absent',  ack: true });
+			}
+		}
+
+		// Dark: compute from first available lux reading
+		if (room.luxDpIds.length > 0) {
+			let lux: number | null = null;
+			for (const dpId of room.luxDpIds) {
+				try {
+					const s = await this.getForeignStateAsync(dpId);
+					if (typeof s?.val === 'number') { lux = s.val; break; }
+				} catch { /* ignore */ }
+			}
+			if (lux !== null) {
+				await this.setStateAsync(`${room.relId}.dark`, {
+					val: this.computeDarkState(lux, room.dunkelgrenze), ack: true,
+				});
+			}
+		}
+	}
+
+	/** Handles a motion DP change for all rooms that monitor it. */
+	private async handleMotionChange(dpId: string, isMotion: boolean): Promise<void> {
+		for (const roomRelId of (this.dpToRoomsMotion.get(dpId) ?? [])) {
+			const room = this.roomEntries.get(roomRelId);
+			if (!room) continue;
+
+			if (isMotion) {
+				// New motion: cancel cooldown, go to present
+				const existing = this.cooldownTimers.get(roomRelId);
+				if (existing !== undefined) { clearTimeout(existing); this.cooldownTimers.delete(roomRelId); }
+				await this.setStateAsync(`${roomRelId}.presence`, { val: 'present', ack: true });
+			} else {
+				// Motion cleared: check if another sensor is still active
+				let anyOtherActive = false;
+				for (const otherId of room.motionDpIds) {
+					if (otherId === dpId) continue;
+					try {
+						const s = await this.getForeignStateAsync(otherId);
+						if (s?.val === true) { anyOtherActive = true; break; }
+					} catch { /* ignore */ }
+				}
+				if (!anyOtherActive) {
+					// Cancel any stale timer, start fresh cooldown
+					const existing = this.cooldownTimers.get(roomRelId);
+					if (existing !== undefined) clearTimeout(existing);
+
+					await this.setStateAsync(`${roomRelId}.presence`, { val: 'cooldown', ack: true });
+					const timer = setTimeout(() => {
+						this.cooldownTimers.delete(roomRelId);
+						this.setStateAsync(`${roomRelId}.presence`, { val: 'absent', ack: true }).catch(e => {
+							this.log.error(`Cooldown expire failed for ${roomRelId}: ${(e as Error).message}`);
+						});
+					}, room.cooldownMs);
+					this.cooldownTimers.set(roomRelId, timer);
+				}
+			}
+		}
+	}
+
+	/** Handles a lux DP change for all rooms that monitor it. */
+	private async handleLuxChange(dpId: string, lux: number): Promise<void> {
+		for (const roomRelId of (this.dpToRoomsLux.get(dpId) ?? [])) {
+			const room = this.roomEntries.get(roomRelId);
+			if (!room) continue;
+			await this.setStateAsync(`${roomRelId}.dark`, {
+				val: this.computeDarkState(lux, room.dunkelgrenze), ack: true,
+			});
+		}
+	}
+
+	/** Computes dark/twilight/bright with hysteresis = threshold / 10. */
+	private computeDarkState(lux: number, threshold: number): 'dark' | 'twilight' | 'bright' {
+		const h = threshold / 10;
+		if (lux < threshold - h) return 'dark';
+		if (lux > threshold + h) return 'bright';
+		return 'twilight';
 	}
 
 	// ---- tree → objects sync ----
@@ -250,6 +470,8 @@ class Faut extends utils.Adapter {
 	 */
 	private onUnload(callback: () => void): void {
 		try {
+			// Clear all running presence cooldown timers
+			for (const timer of this.cooldownTimers.values()) clearTimeout(timer);
 			callback();
 		} catch (error) {
 			this.log.error(`Error during unloading: ${(error as Error).message}`);
@@ -261,14 +483,32 @@ class Faut extends utils.Adapter {
 	 * Is called if a subscribed state changes.
 	 */
 	private onStateChange(id: string, state: ioBroker.State | null | undefined): void {
-		if (!state) return; // state deleted, nothing to mirror
+		if (!state) return;
 
+		// Mirror sensor value to own state
 		const ownRelId = this.dpToStateMap.get(id);
-		if (!ownRelId) return; // not one of our tracked source DPs
+		if (ownRelId) {
+			this.setStateAsync(ownRelId, { val: state.val, ack: true }).catch(e => {
+				this.log.error(`Failed to mirror ${id} → ${ownRelId}: ${(e as Error).message}`);
+			});
+		}
 
-		this.setStateAsync(ownRelId, { val: state.val, ack: true }).catch(e => {
-			this.log.error(`Failed to mirror ${id} → ${ownRelId}: ${(e as Error).message}`);
-		});
+		// Room presence: react to motion changes
+		if (this.dpToRoomsMotion.has(id)) {
+			this.handleMotionChange(id, state.val === true).catch(e => {
+				this.log.error(`handleMotionChange error for ${id}: ${(e as Error).message}`);
+			});
+		}
+
+		// Room darkness: react to lux changes
+		if (this.dpToRoomsLux.has(id)) {
+			const lux = typeof state.val === 'number' ? state.val : null;
+			if (lux !== null) {
+				this.handleLuxChange(id, lux).catch(e => {
+					this.log.error(`handleLuxChange error for ${id}: ${(e as Error).message}`);
+				});
+			}
+		}
 	}
 }
 
