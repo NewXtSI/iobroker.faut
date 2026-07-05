@@ -12,5 +12,14 @@
     "Add": "Hinzufügen",
     "Rename": "Umbenennen",
     "Enabled": "Aktiviert",
-    "Control enabled": "Steuerung aktiviert"
+    "Control enabled": "Steuerung aktiviert",
+    "DP Temperature": "Datenpunkt Temperatur",
+    "DP Humidity": "Datenpunkt Luftfeuchtigkeit",
+    "DP Lux": "Datenpunkt Lux",
+    "DP Motion": "Datenpunkt Bewegung",
+    "DP Door/Window": "Datenpunkt Fenster/Tür",
+    "Battery powered": "Batteriebetrieben",
+    "DP Battery": "Datenpunkt Batterie",
+    "Reachability": "Erreichbarkeit",
+    "DP Reachability trigger": "Trigger Datenpunkt"
 }

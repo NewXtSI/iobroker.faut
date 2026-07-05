@@ -42,11 +42,13 @@ import WhatshotIcon from '@mui/icons-material/Whatshot';
 
 import { I18n } from '@iobroker/adapter-react-v5';
 import {
+    type FautNodeConfig,
     type FautTreeNode,
     type FautNodeType,
     ALLOWED_CHILDREN,
     NODE_TYPE_DEFS,
 } from '../types/treeTypes';
+import SensorDetailPanel from '../components/SensorDetailPanel';
 
 // ---- icon map ----
 
@@ -135,6 +137,19 @@ function renameNode(nodes: FautTreeNode[], id: string, newLabel: string): FautTr
     return nodes.map(node => {
         if (node.id === id) return { ...node, label: newLabel };
         if (node.children) return { ...node, children: renameNode(node.children, id, newLabel) };
+        return node;
+    });
+}
+
+function updateNodeConfig(
+    nodes: FautTreeNode[],
+    id: string,
+    key: keyof FautNodeConfig,
+    value: string | boolean,
+): FautTreeNode[] {
+    return nodes.map(node => {
+        if (node.id === id) return { ...node, config: { ...(node.config ?? {}), [key]: value } };
+        if (node.children) return { ...node, children: updateNodeConfig(node.children, id, key, value) };
         return node;
     });
 }
@@ -288,6 +303,18 @@ export default function TabGrundstueck({ native, onChange }: TabGrundstueckProps
                         <Typography variant="body2" color="text.secondary">
                             ID: {selectedNode.id}
                         </Typography>
+
+                        {/* Sensor config */}
+                        {NODE_TYPE_DEFS[selectedNode.type].kind === 'sensor' && (
+                            <SensorDetailPanel
+                                node={selectedNode}
+                                onConfigChange={(key, value) => {
+                                    const newTree = updateNodeConfig(tree, selectedNode.id, key, value);
+                                    setTree(newTree);
+                                    onChange('grundstueck', newTree);
+                                }}
+                            />
+                        )}
                     </>
                 ) : (
                     <Typography color="text.secondary">
