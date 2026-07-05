@@ -69,6 +69,22 @@ function findNode(nodes: TreeNode[], id: string): TreeNode | null {
     return null;
 }
 
+/** Adds newNode as a child of the node with parentId (or at root if parentId is null). */
+function addNodeUnder(nodes: TreeNode[], parentId: string | null, newNode: TreeNode): TreeNode[] {
+    if (parentId === null) {
+        return [...nodes, newNode];
+    }
+    return nodes.map(node => {
+        if (node.id === parentId) {
+            return { ...node, children: [...(node.children ?? []), newNode] };
+        }
+        if (node.children) {
+            return { ...node, children: addNodeUnder(node.children, parentId, newNode) };
+        }
+        return node;
+    });
+}
+
 export default function TabGrundstueck(_props: TabGrundstueckProps): React.JSX.Element {
     const [tree, setTree] = useState<TreeNode[]>(initialTree);
     const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -83,10 +99,14 @@ export default function TabGrundstueck(_props: TabGrundstueckProps): React.JSX.E
             id: `node-${Date.now()}`,
             label: newLabel.trim(),
         };
-        setTree(prev => [...prev, newNode]);
+        setTree(prev => addNodeUnder(prev, selectedId, newNode));
         setNewLabel('');
         setDialogOpen(false);
     };
+
+    const dialogTitle = selectedNode
+        ? `${I18n.t('Add under')} "${selectedNode.label}"`
+        : I18n.t('Add root element');
 
     return (
         <Box sx={{ display: 'flex', height: '100%', gap: 2, p: 1 }}>
@@ -96,7 +116,7 @@ export default function TabGrundstueck(_props: TabGrundstueckProps): React.JSX.E
                     <Typography variant="subtitle1" sx={{ flexGrow: 1 }}>
                         {I18n.t('Property')}
                     </Typography>
-                    <IconButton size="small" onClick={() => setDialogOpen(true)}>
+                    <IconButton size="small" onClick={() => setDialogOpen(true)} title={dialogTitle}>
                         <AddIcon />
                     </IconButton>
                 </Box>
@@ -129,7 +149,7 @@ export default function TabGrundstueck(_props: TabGrundstueckProps): React.JSX.E
 
             {/* Add Dialog */}
             <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)}>
-                <DialogTitle>{I18n.t('Add new element')}</DialogTitle>
+                <DialogTitle>{dialogTitle}</DialogTitle>
                 <DialogContent>
                     <TextField
                         autoFocus

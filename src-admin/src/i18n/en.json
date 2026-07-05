@@ -4,7 +4,11 @@
     "No settings available yet.": "No settings available yet.",
     "Select an item in the tree": "Select an item in the tree",
     "Add new element": "Add new element",
+    "Add under": "Add under",
+    "Add root element": "Add root element",
     "Name": "Name",
     "Cancel": "Cancel",
-    "Add": "Add"
+    "Add": "Add",
+    "Enabled": "Enabled",
+    "Control enabled": "Control enabled"
 }

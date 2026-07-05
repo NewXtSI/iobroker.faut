@@ -52,7 +52,10 @@
 			}
 		]
 	},
-	"native": {},
+	"native": {
+		"aktiviert": false,
+		"steuerungAktiviert": false
+	},
 	"objects": [],
 	"instanceObjects": []
 }
