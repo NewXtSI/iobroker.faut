@@ -1,0 +1,58 @@
+{
+	"common": {
+		"name": "faut",
+		"version": "0.0.1",
+		"news": {
+			"0.0.1": {
+				"en": "initial release",
+				"de": "Erstveröffentlichung"
+			}
+		},
+		"titleLang": {
+			"en": "Faut",
+			"de": "Faut"
+		},
+		"desc": {
+			"en": "iobroker faut adapter",
+			"de": "iobroker faut Adapter"
+		},
+		"authors": [
+			"NewXtSI <leerzeichen32@googlemail.com>"
+		],
+		"keywords": [
+			"faut",
+			"automation",
+			"IoT"
+		],
+		"licenseInformation": {
+			"type": "free",
+			"license": "MIT"
+		},
+		"platform": "Javascript/Node.js",
+		"icon": "faut.png",
+		"enabled": true,
+		"extIcon": "https://raw.githubusercontent.com/NewXtSI/ioBroker.faut/main/admin/faut.png",
+		"readme": "https://github.com/NewXtSI/ioBroker.faut/blob/main/README.md",
+		"loglevel": "info",
+		"tier": 3,
+		"mode": "daemon",
+		"type": "general",
+		"compact": true,
+		"adminUI": {
+			"config": "materialize"
+		},
+		"dependencies": [
+			{
+				"js-controller": ">=6.0.0"
+			}
+		],
+		"globalDependencies": [
+			{
+				"admin": ">=7.0.0"
+			}
+		]
+	},
+	"native": {},
+	"objects": [],
+	"instanceObjects": []
+}

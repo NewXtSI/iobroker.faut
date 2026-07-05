@@ -1,0 +1,16 @@
+// Specialized tsconfig – only compiles .ts files in src/
+{
+	"extends": "./tsconfig.json",
+	"compilerOptions": {
+		"allowJs": false,
+		"checkJs": false,
+		"noEmit": false,
+		"declaration": false
+	},
+	"include": [
+		"src/**/*.ts"
+	],
+	"exclude": [
+		"src/**/*.test.ts"
+	]
+}

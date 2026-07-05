@@ -1,0 +1,23 @@
+# No dot-directories except github/vscode
+.*/
+!.vscode/
+!.github/
+
+*.code-workspace
+node_modules
+nbproject
+
+# npm package files
+iobroker.*.tgz
+
+Thumbs.db
+.commitinfo
+
+# Build output is intentionally committed so ioBroker can install directly from GitHub.
+# Uncomment the lines below if you switch to a CI/CD pipeline that publishes to npm instead.
+# build/
+# admin/build/
+
+# i18n intermediate files
+admin/i18n/flat.txt
+admin/i18n/*/flat.txt
