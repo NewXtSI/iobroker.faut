@@ -27,8 +27,10 @@
   "devDependencies": {
     "@emotion/react": "^11.0.0",
     "@emotion/styled": "^11.0.0",
+    "@iobroker/adapter-react-v5": "^7.0.0",
     "@mui/icons-material": "^5.0.0",
     "@mui/material": "^5.0.0",
+    "@mui/x-tree-view": "^6.0.0",
     "@iobroker/testing": "^5.2.2",
     "@tsconfig/node20": "^20.1.9",
     "@types/iobroker": "npm:@iobroker/types@^7.2.2",

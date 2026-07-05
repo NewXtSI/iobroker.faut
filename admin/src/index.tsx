@@ -4,5 +4,5 @@ import App from './app';
 
 const container = document.getElementById('root');
 if (container) {
-	createRoot(container).render(<App />);
+	createRoot(container).render(<App adapterName="faut" />);
 }

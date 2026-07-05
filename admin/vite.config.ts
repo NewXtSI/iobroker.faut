@@ -2,22 +2,21 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { resolve } from 'path';
 
-// Builds the React admin into admin/build/index.js (IIFE, fully self-contained).
-// ioBroker's admin panel loads admin/index_m.html which references this bundle.
+// Standard Vite application build (not lib mode).
+// Produces code-split chunks which avoids the IIFE inlining hang on large bundles.
+// ioBroker loads admin/index_m.html which references build/index.js via <script type="module">.
 export default defineConfig({
+    root: resolve(__dirname),
+    base: './',
     plugins: [react()],
     build: {
-        lib: {
-            entry: resolve(__dirname, 'src/index.tsx'),
-            name: 'FautAdmin',
-            fileName: () => 'index.js',
-            formats: ['iife'],
-        },
         outDir: resolve(__dirname, 'build'),
         emptyOutDir: true,
         rollupOptions: {
             output: {
-                inlineDynamicImports: true,
+                entryFileNames: '[name].js',
+                chunkFileNames: 'chunks/[name]-[hash].js',
+                assetFileNames: 'assets/[name]-[hash][extname]',
             },
         },
     },
