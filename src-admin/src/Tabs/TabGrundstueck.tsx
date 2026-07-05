@@ -38,6 +38,7 @@ import PersonIcon from '@mui/icons-material/Person';
 import ThermostatIcon from '@mui/icons-material/Thermostat';
 import WaterDropIcon from '@mui/icons-material/WaterDrop';
 import WbSunnyIcon from '@mui/icons-material/WbSunny';
+import Brightness5Icon from '@mui/icons-material/Brightness5';
 import WhatshotIcon from '@mui/icons-material/Whatshot';
 
 import { I18n, type IobTheme } from '@iobroker/adapter-react-v5';
@@ -69,6 +70,7 @@ const TYPE_ICONS: Record<FautNodeType, SvgIconComponent> = {
     Regen:           WaterDropIcon,
     Bewegung:        DirectionsRunIcon,
     'Fenster/Tür':   DoorFrontIcon,
+    Sonne:           Brightness5Icon,
     Thermostat:      ThermostatIcon,
     Rolladen:        BlindsIcon,
     Ventilator:      AirIcon,
@@ -321,7 +323,7 @@ export default function TabGrundstueck({ native, socket, theme, onChange }: TabG
                         </Typography>
 
                         {/* Sensor config */}
-                        {NODE_TYPE_DEFS[selectedNode.type].kind === 'sensor' && (
+                        {NODE_TYPE_DEFS[selectedNode.type].kind === 'sensor' && selectedNode.type !== 'Sonne' && (
                             <SensorDetailPanel
                                 node={selectedNode}
                                 socket={socket}
@@ -335,6 +337,15 @@ export default function TabGrundstueck({ native, socket, theme, onChange }: TabG
                                     onChange('grundstueck', newTree);
                                 }}
                             />
+                        )}
+
+                        {/* Sonne info */}
+                        {selectedNode.type === 'Sonne' && (
+                            <Box sx={{ mt: 2, p: 1.5, borderRadius: 1, bgcolor: 'action.hover' }}>
+                                <Typography variant="body2" color="text.secondary">
+                                    {I18n.t('Sun data (sunrise, sunset, elevation, azimuth) is calculated automatically every 5 minutes using the geo position from ioBroker system settings.')}
+                                </Typography>
+                            </Box>
                         )}
 
                         {/* Raum config */}

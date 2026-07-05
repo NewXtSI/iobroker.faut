@@ -17,6 +17,7 @@ export type FautNodeType =
     | 'Regen'
     | 'Bewegung'
     | 'Fenster/Tür'
+    | 'Sonne'
     | 'Thermostat'
     | 'Rolladen'
     | 'Ventilator'

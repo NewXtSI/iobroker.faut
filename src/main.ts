@@ -3,6 +3,7 @@
  */
 
 import * as utils from '@iobroker/adapter-core';
+import * as SunCalc from 'suncalc2';
 import { type FautNodeConfig, type FautTreeNode } from './lib/treeTypes';
 
 /** Runtime configuration for a room’s presence/dark sensor logic. */
@@ -36,6 +37,13 @@ class Faut extends utils.Adapter {
 	private readonly dpToUnreachMap  = new Map<string, string>();
 	/** Active unreach timers, keyed by own unreach-state relId. */
 	private readonly unreachTimers   = new Map<string, ReturnType<typeof setTimeout>>();
+	/** RelIds of all Sonne nodes (for sun state updates). */
+	private readonly sunNodeRelIds: string[] = [];
+	/** 5-minute interval timer for sun position updates. */
+	private sunIntervalTimer: ReturnType<typeof setInterval> | null = null;
+	/** Geo position read from system.config. */
+	private sunLat = 0;
+	private sunLng = 0;
 
 	public constructor(options: Partial<utils.AdapterOptions> = {}) {
 		super({
@@ -61,6 +69,7 @@ class Faut extends utils.Adapter {
 		}
 
 		await this.setupSensorSubscriptions();
+		await this.setupSunNodes();
 	}
 
 	// ---- sensor subscriptions ----
@@ -401,6 +410,79 @@ class Faut extends utils.Adapter {
 		return 'twilight';
 	}
 
+	// ---- sun (Sonne) ----
+
+	/** Collects all Sonne node relIds from the tree. */
+	private collectSunNodes(nodes: FautTreeNode[], prefix: string): void {
+		for (const node of nodes) {
+			const relId = prefix ? `${prefix}.${node.id}` : node.id;
+			if (node.type === 'Sonne') this.sunNodeRelIds.push(relId);
+			if (node.children?.length) this.collectSunNodes(node.children, relId);
+		}
+	}
+
+	/**
+	 * Sets up sun position updates for all Sonne nodes.
+	 * Reads geo position from system.config, computes initial values,
+	 * then refreshes elevation + azimuth every 5 minutes.
+	 */
+	private async setupSunNodes(): Promise<void> {
+		const tree: FautTreeNode[] = Array.isArray(this.config.grundstueck)
+			? (this.config.grundstueck as FautTreeNode[])
+			: [];
+		this.collectSunNodes(tree, '');
+		if (this.sunNodeRelIds.length === 0) return;
+
+		// Read geo position from ioBroker system config
+		try {
+			const sysCfg = await this.getForeignObjectAsync('system.config');
+			const common = (sysCfg?.common ?? {}) as Record<string, unknown>;
+			this.sunLat = typeof common.latitude  === 'number' ? common.latitude  : 0;
+			this.sunLng = typeof common.longitude === 'number' ? common.longitude : 0;
+		} catch (e) {
+			this.log.warn(`Could not read system.config for geo position: ${(e as Error).message}`);
+		}
+
+		if (this.sunLat === 0 && this.sunLng === 0) {
+			this.log.warn('No geo position set in ioBroker system settings – sun calculation disabled.');
+			return;
+		}
+
+		this.log.info(`Sun nodes: ${this.sunNodeRelIds.length}, position: ${this.sunLat}°N ${this.sunLng}°E`);
+
+		await this.updateSunStates();
+
+		this.sunIntervalTimer = setInterval(() => {
+			this.updateSunStates().catch(e => {
+				this.log.error(`Sun update error: ${(e as Error).message}`);
+			});
+		}, 5 * 60_000);
+	}
+
+	/** Calculates and writes all sun states for the current moment. */
+	private async updateSunStates(): Promise<void> {
+		const now    = new Date();
+		const times  = SunCalc.getTimes(now, this.sunLat, this.sunLng);
+		const pos    = SunCalc.getPosition(now, this.sunLat, this.sunLng);
+
+		const pad = (n: number): string => String(Math.floor(n)).padStart(2, '0');
+		const fmtTime = (d: Date): string =>
+			isNaN(d.getTime()) ? '--:--' : `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+
+		const sunriseStr  = fmtTime(times.sunrise);
+		const sunsetStr   = fmtTime(times.sunset);
+		// suncalc2 altitude = radians above horizon; azimuth = radians from south (positive=west)
+		const elevation   = Math.round(pos.altitude * (180 / Math.PI) * 100) / 100;
+		const azimuth     = Math.round(((pos.azimuth * (180 / Math.PI)) + 180) * 100) / 100;
+
+		for (const relId of this.sunNodeRelIds) {
+			await this.setStateAsync(`${relId}.sunrise`,   { val: sunriseStr, ack: true });
+			await this.setStateAsync(`${relId}.sunset`,    { val: sunsetStr,  ack: true });
+			await this.setStateAsync(`${relId}.elevation`, { val: elevation,  ack: true });
+			await this.setStateAsync(`${relId}.azimuth`,   { val: azimuth,    ack: true });
+		}
+	}
+
 	// ---- tree → objects sync ----
 
 	/**
@@ -529,6 +611,11 @@ class Faut extends utils.Adapter {
 			if (cfg.dpBewegung)         specs.push({ id: 'motion',      name: 'Motion',      dataType: 'boolean', role: 'sensor.motion',     def: false });
 		} else if (nodeType === 'Fenster/Tür') {
 			if (cfg.dpFensterTuer)      specs.push({ id: 'open',        name: 'Open',        dataType: 'boolean', role: 'sensor.door',       def: false });
+		} else if (nodeType === 'Sonne') {
+			specs.push({ id: 'sunrise',   name: 'Sunrise',   dataType: 'string', role: 'text' });
+			specs.push({ id: 'sunset',    name: 'Sunset',    dataType: 'string', role: 'text' });
+			specs.push({ id: 'elevation', name: 'Elevation', dataType: 'number', role: 'value', unit: '°' });
+			specs.push({ id: 'azimuth',   name: 'Azimuth',   dataType: 'number', role: 'value', unit: '°' });
 		} else if (nodeType === 'Raum') {
 			if (cfg.bewegungserkennung) {
 				specs.push({
@@ -544,8 +631,8 @@ class Faut extends utils.Adapter {
 			}
 		}
 
-		// Common sensor states (all leaf sensor types, not Raum)
-		if (nodeType !== 'Raum') {
+		// Common sensor states (all leaf sensor types, not Raum or Sonne)
+		if (nodeType !== 'Raum' && nodeType !== 'Sonne') {
 			if (cfg.batteriebetrieben) specs.push({ id: 'lowBat',  name: 'Low Battery',  dataType: 'boolean', role: 'indicator.lowbat',  def: false });
 			if (cfg.erreichbarkeit)    specs.push({ id: 'unreach', name: 'Unreachable',  dataType: 'boolean', role: 'indicator.unreach', def: false });
 		}
@@ -564,6 +651,8 @@ class Faut extends utils.Adapter {
 			for (const timer of this.cooldownTimers.values()) clearTimeout(timer);
 			// Clear all running unreach timers
 			for (const timer of this.unreachTimers.values()) clearTimeout(timer);
+			// Clear sun interval
+			if (this.sunIntervalTimer !== null) clearInterval(this.sunIntervalTimer);
 			callback();
 		} catch (error) {
 			this.log.error(`Error during unloading: ${(error as Error).message}`);
