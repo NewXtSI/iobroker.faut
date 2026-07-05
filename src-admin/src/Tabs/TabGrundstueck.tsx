@@ -40,7 +40,7 @@ import WaterDropIcon from '@mui/icons-material/WaterDrop';
 import WbSunnyIcon from '@mui/icons-material/WbSunny';
 import WhatshotIcon from '@mui/icons-material/Whatshot';
 
-import { I18n } from '@iobroker/adapter-react-v5';
+import { I18n, type IobTheme } from '@iobroker/adapter-react-v5';
 import {
     type FautNodeConfig,
     type FautTreeNode,
@@ -79,6 +79,7 @@ const TYPE_ICONS: Record<FautNodeType, SvgIconComponent> = {
 interface TabGrundstueckProps {
     common: Record<string, any>;
     socket: any;
+    theme: IobTheme;
     native: Record<string, any>;
     instance: number;
     adapterName: string;
@@ -156,7 +157,7 @@ function updateNodeConfig(
 
 // ---- component ----
 
-export default function TabGrundstueck({ native, onChange }: TabGrundstueckProps): React.JSX.Element {
+export default function TabGrundstueck({ native, socket, theme, onChange }: TabGrundstueckProps): React.JSX.Element {
     const [tree, setTree] = useState<FautTreeNode[]>(() =>
         (native.grundstueck as FautTreeNode[] | undefined) ?? [],
     );
@@ -308,6 +309,8 @@ export default function TabGrundstueck({ native, onChange }: TabGrundstueckProps
                         {NODE_TYPE_DEFS[selectedNode.type].kind === 'sensor' && (
                             <SensorDetailPanel
                                 node={selectedNode}
+                                socket={socket}
+                                theme={theme}
                                 onConfigChange={(key, value) => {
                                     const newTree = updateNodeConfig(tree, selectedNode.id, key, value);
                                     setTree(newTree);
