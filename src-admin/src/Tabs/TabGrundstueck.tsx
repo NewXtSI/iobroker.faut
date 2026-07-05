@@ -49,6 +49,7 @@ import {
     NODE_TYPE_DEFS,
 } from '../types/treeTypes';
 import SensorDetailPanel from '../components/SensorDetailPanel';
+import RaumDetailPanel from '../components/RaumDetailPanel';
 
 // ---- icon map ----
 
@@ -146,12 +147,26 @@ function updateNodeConfig(
     nodes: FautTreeNode[],
     id: string,
     key: keyof FautNodeConfig,
-    value: string | boolean,
+    value: string | boolean | number,
 ): FautTreeNode[] {
     return nodes.map(node => {
         if (node.id === id) return { ...node, config: { ...(node.config ?? {}), [key]: value } };
         if (node.children) return { ...node, children: updateNodeConfig(node.children, id, key, value) };
         return node;
+    });
+}
+
+/** Clears globalerSensor on all Helligkeit nodes except the one with exceptId. */
+function clearGlobalSensor(nodes: FautTreeNode[], exceptId: string): FautTreeNode[] {
+    return nodes.map(node => {
+        let updated: FautTreeNode = node;
+        if (node.type === 'Helligkeit' && node.id !== exceptId && node.config?.globalerSensor) {
+            updated = { ...node, config: { ...(node.config ?? {}), globalerSensor: false } };
+        }
+        if (node.children?.length) {
+            updated = { ...updated, children: clearGlobalSensor(node.children, exceptId) };
+        }
+        return updated;
     });
 }
 
@@ -311,6 +326,21 @@ export default function TabGrundstueck({ native, socket, theme, onChange }: TabG
                                 node={selectedNode}
                                 socket={socket}
                                 theme={theme}
+                                onConfigChange={(key, value) => {
+                                    let newTree = updateNodeConfig(tree, selectedNode.id, key, value);
+                                    if (key === 'globalerSensor' && value === true) {
+                                        newTree = clearGlobalSensor(newTree, selectedNode.id);
+                                    }
+                                    setTree(newTree);
+                                    onChange('grundstueck', newTree);
+                                }}
+                            />
+                        )}
+
+                        {/* Raum config */}
+                        {selectedNode.type === 'Raum' && (
+                            <RaumDetailPanel
+                                node={selectedNode}
                                 onConfigChange={(key, value) => {
                                     const newTree = updateNodeConfig(tree, selectedNode.id, key, value);
                                     setTree(newTree);

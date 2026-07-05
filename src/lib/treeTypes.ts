@@ -28,6 +28,7 @@ export interface FautNodeConfig {
     dpLuftfeuchtigkeit?: string;
     // Helligkeit-specific
     dpLux?: string;
+    globalerSensor?: boolean;
     // Bewegung-specific
     dpBewegung?: string;
     // Fenster/Tür-specific
@@ -37,6 +38,12 @@ export interface FautNodeConfig {
     dpBatterie?: string;
     erreichbarkeit?: boolean;
     dpErreichbarkeit?: string;
+    // Raum-specific
+    bewegungserkennung?: boolean;
+    bewegungsCooldown?: number;
+    dunkelheitserkennung?: boolean;
+    dunkelgrenze?: number;
+    globalenSensorBenutzen?: boolean;
 }
 
 export interface FautTreeNode {

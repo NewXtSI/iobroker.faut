@@ -70,7 +70,7 @@ interface Props {
     node: FautTreeNode;
     socket: any;
     theme: IobTheme;
-    onConfigChange: (key: keyof FautNodeConfig, value: string | boolean) => void;
+    onConfigChange: (key: keyof FautNodeConfig, value: string | boolean | number) => void;
 }
 
 export default function SensorDetailPanel({ node, socket, theme, onConfigChange }: Props): React.JSX.Element {
@@ -100,6 +100,20 @@ export default function SensorDetailPanel({ node, socket, theme, onConfigChange 
                     onSelect={() => openSelect(f.key)}
                 />
             ))}
+
+            {/* Helligkeit: global sensor toggle (exclusive across all Helligkeit nodes) */}
+            {node.type === 'Helligkeit' && (
+                <FormControlLabel
+                    control={
+                        <Checkbox
+                            size="small"
+                            checked={cfg.globalerSensor ?? false}
+                            onChange={e => onConfigChange('globalerSensor', e.target.checked)}
+                        />
+                    }
+                    label={I18n.t('Global sensor')}
+                />
+            )}
 
             <Divider />
 

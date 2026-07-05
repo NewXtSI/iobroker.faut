@@ -22,5 +22,11 @@
     "DP Battery": "Datenpunkt Batterie",
     "Reachability": "Erreichbarkeit",
     "DP Reachability trigger": "Trigger Datenpunkt",
-    "Select data point": "Datenpunkt auswählen"
+    "Select data point": "Datenpunkt auswählen",
+    "Global sensor": "Globaler Sensor",
+    "Motion detection": "Bewegungserkennung",
+    "Motion cooldown (min)": "Bewegungs-Cooldown (Min)",
+    "Darkness detection": "Dunkelheitserkennung",
+    "Darkness threshold (lux)": "Dunkelgrenze (Lux)",
+    "Use global sensor": "Globalen Sensor benutzen"
 }
