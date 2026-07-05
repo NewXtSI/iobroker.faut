@@ -12,5 +12,14 @@
     "Add": "Add",
     "Rename": "Rename",
     "Enabled": "Enabled",
-    "Control enabled": "Control enabled"
+    "Control enabled": "Control enabled",
+    "DP Temperature": "DP Temperature",
+    "DP Humidity": "DP Humidity",
+    "DP Lux": "DP Lux",
+    "DP Motion": "DP Motion",
+    "DP Door/Window": "DP Door/Window",
+    "Battery powered": "Battery powered",
+    "DP Battery": "DP Battery",
+    "Reachability": "Reachability",
+    "DP Reachability trigger": "DP Reachability trigger"
 }

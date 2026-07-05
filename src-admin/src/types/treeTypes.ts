@@ -77,6 +77,25 @@ export const ALLOWED_CHILDREN: Record<'root' | FautNodeType, FautNodeType[]> = {
     Lampe:          [],
 };
 
+// ---- Node config ----
+
+export interface FautNodeConfig {
+    // Temperatur-specific
+    dpTemperatur?: string;
+    dpLuftfeuchtigkeit?: string;
+    // Helligkeit-specific
+    dpLux?: string;
+    // Bewegung-specific
+    dpBewegung?: string;
+    // Fenster/Tür-specific
+    dpFensterTuer?: string;
+    // Common for all sensors
+    batteriebetrieben?: boolean;
+    dpBatterie?: string;
+    erreichbarkeit?: boolean;
+    dpErreichbarkeit?: string;
+}
+
 // ---- Tree node ----
 
 export interface FautTreeNode {
@@ -84,5 +103,6 @@ export interface FautTreeNode {
     type: FautNodeType;
     /** User-given name; defaults to the type's label */
     label: string;
+    config?: FautNodeConfig;
     children?: FautTreeNode[];
 }
