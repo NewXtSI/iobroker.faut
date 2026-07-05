@@ -3,7 +3,10 @@
 declare global {
 	namespace ioBroker {
 		interface AdapterConfig {
-			// example: option1: boolean;
+			/** Adapter aktiviert */
+			aktiviert: boolean;
+			/** Steuerung aktiviert (nur wenn aktiviert = true) */
+			steuerungAktiviert: boolean;
 		}
 	}
 }
