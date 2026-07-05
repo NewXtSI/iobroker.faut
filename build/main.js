@@ -37,6 +37,8 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 const utils = __importStar(require("@iobroker/adapter-core"));
+/** After this many ms without a trigger-DP update the sensor is considered unreachable. */
+const UNREACH_TIMEOUT_MS = 1_800_000; // 30 minutes
 class Faut extends utils.Adapter {
     /** Maps a foreign state ID (source DP) to the relative ID of our own state. */
     dpToStateMap = new Map();
@@ -48,6 +50,14 @@ class Faut extends utils.Adapter {
     roomEntries = new Map();
     /** Active cooldown timers, keyed by room relId. */
     cooldownTimers = new Map();
+    /** Maps a battery DP ID to the own lowBat state relId. */
+    dpToLowBatMap = new Map();
+    /** Tracks the current lowBat boolean per lowBat-state relId (hysteresis). */
+    lowBatValues = new Map();
+    /** Maps a trigger DP ID to the own unreach state relId. */
+    dpToUnreachMap = new Map();
+    /** Active unreach timers, keyed by own unreach-state relId. */
+    unreachTimers = new Map();
     constructor(options = {}) {
         super({
             ...options,
@@ -80,7 +90,9 @@ class Faut extends utils.Adapter {
             ? this.config.grundstueck
             : [];
         this.collectDpMappings(tree, '');
-        if (this.dpToStateMap.size === 0) {
+        this.collectBatteryAndUnreachMappings(tree, '');
+        const hasAnyDp = this.dpToStateMap.size > 0 || this.dpToLowBatMap.size > 0 || this.dpToUnreachMap.size > 0;
+        if (!hasAnyDp) {
             this.log.info('No sensor data points configured.');
             return;
         }
@@ -97,8 +109,92 @@ class Faut extends utils.Adapter {
                 this.log.warn(`Initial read failed for ${dpId}: ${e.message}`);
             }
         }
+        // Battery + unreach subscriptions and initial values
+        await this.setupBatteryAndUnreach();
         // Room presence / darkness logic
         await this.setupRoomLogic(tree);
+    }
+    // ---- battery + unreach ----
+    /** Walks the tree and fills dpToLowBatMap / dpToUnreachMap. */
+    collectBatteryAndUnreachMappings(nodes, prefix) {
+        for (const node of nodes) {
+            const relId = prefix ? `${prefix}.${node.id}` : node.id;
+            const cfg = node.config ?? {};
+            if (cfg.batteriebetrieben && cfg.dpBatterie)
+                this.dpToLowBatMap.set(cfg.dpBatterie, `${relId}.lowBat`);
+            if (cfg.erreichbarkeit && cfg.dpErreichbarkeit)
+                this.dpToUnreachMap.set(cfg.dpErreichbarkeit, `${relId}.unreach`);
+            if (node.children?.length)
+                this.collectBatteryAndUnreachMappings(node.children, relId);
+        }
+    }
+    /** Subscribes to battery/trigger DPs and sets initial lowBat/unreach states. */
+    async setupBatteryAndUnreach() {
+        // ---- LowBat ----
+        for (const [dpId, lowBatRelId] of this.dpToLowBatMap) {
+            this.subscribeForeignStates(dpId);
+            try {
+                const state = await this.getForeignStateAsync(dpId);
+                if (state?.val !== null && state?.val !== undefined) {
+                    const cur = this.lowBatValues.get(lowBatRelId) ?? false;
+                    const val = this.computeLowBat(state.val, cur);
+                    this.lowBatValues.set(lowBatRelId, val);
+                    await this.setStateAsync(lowBatRelId, { val, ack: true });
+                }
+            }
+            catch (e) {
+                this.log.warn(`Initial battery read failed for ${dpId}: ${e.message}`);
+            }
+        }
+        // ---- Unreach ----
+        for (const [dpId, unreachRelId] of this.dpToUnreachMap) {
+            this.subscribeForeignStates(dpId);
+            try {
+                const state = await this.getForeignStateAsync(dpId);
+                if (!state) {
+                    await this.setStateAsync(unreachRelId, { val: true, ack: true });
+                }
+                else {
+                    const elapsed = Date.now() - (state.ts ?? 0);
+                    if (elapsed >= UNREACH_TIMEOUT_MS) {
+                        await this.setStateAsync(unreachRelId, { val: true, ack: true });
+                    }
+                    else {
+                        await this.setStateAsync(unreachRelId, { val: false, ack: true });
+                        this.startUnreachTimer(unreachRelId, UNREACH_TIMEOUT_MS - elapsed);
+                    }
+                }
+            }
+            catch (e) {
+                this.log.warn(`Initial unreach check failed for ${dpId}: ${e.message}`);
+            }
+        }
+    }
+    /**
+     * Boolean DP → use directly.
+     * Numeric DP (battery %): true below 20%, false above 21%, unchanged in 20–21% zone.
+     */
+    computeLowBat(val, current) {
+        if (typeof val === 'boolean')
+            return val;
+        if (typeof val === 'number') {
+            if (val < 20)
+                return true;
+            if (val > 21)
+                return false;
+            return current; // hysteresis zone
+        }
+        return current;
+    }
+    /** Starts (or restarts) an unreach timer for the given own-state relId. */
+    startUnreachTimer(unreachRelId, delayMs) {
+        const timer = setTimeout(() => {
+            this.unreachTimers.delete(unreachRelId);
+            this.setStateAsync(unreachRelId, { val: true, ack: true }).catch(e => {
+                this.log.error(`Unreach timer failed for ${unreachRelId}: ${e.message}`);
+            });
+        }, delayMs);
+        this.unreachTimers.set(unreachRelId, timer);
     }
     /**
      * Recursively collects (foreignDpId → ownStateRelId) mappings from the tree.
@@ -475,6 +571,9 @@ class Faut extends utils.Adapter {
             // Clear all running presence cooldown timers
             for (const timer of this.cooldownTimers.values())
                 clearTimeout(timer);
+            // Clear all running unreach timers
+            for (const timer of this.unreachTimers.values())
+                clearTimeout(timer);
             callback();
         }
         catch (error) {
@@ -509,6 +608,27 @@ class Faut extends utils.Adapter {
                     this.log.error(`handleLuxChange error for ${id}: ${e.message}`);
                 });
             }
+        }
+        // LowBat: battery DP changed
+        if (this.dpToLowBatMap.has(id)) {
+            const lowBatRelId = this.dpToLowBatMap.get(id);
+            const cur = this.lowBatValues.get(lowBatRelId) ?? false;
+            const newVal = this.computeLowBat(state.val, cur);
+            this.lowBatValues.set(lowBatRelId, newVal);
+            this.setStateAsync(lowBatRelId, { val: newVal, ack: true }).catch(e => {
+                this.log.error(`LowBat update failed for ${lowBatRelId}: ${e.message}`);
+            });
+        }
+        // Unreach: trigger DP updated → sensor is reachable again; restart timer
+        if (this.dpToUnreachMap.has(id)) {
+            const unreachRelId = this.dpToUnreachMap.get(id);
+            const existing = this.unreachTimers.get(unreachRelId);
+            if (existing !== undefined)
+                clearTimeout(existing);
+            this.setStateAsync(unreachRelId, { val: false, ack: true }).catch(e => {
+                this.log.error(`Unreach clear failed for ${unreachRelId}: ${e.message}`);
+            });
+            this.startUnreachTimer(unreachRelId, UNREACH_TIMEOUT_MS);
         }
     }
 }
