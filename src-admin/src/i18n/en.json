@@ -22,5 +22,11 @@
     "DP Battery": "DP Battery",
     "Reachability": "Reachability",
     "DP Reachability trigger": "DP Reachability trigger",
-    "Select data point": "Select data point"
+    "Select data point": "Select data point",
+    "Global sensor": "Global sensor",
+    "Motion detection": "Motion detection",
+    "Motion cooldown (min)": "Motion cooldown (min)",
+    "Darkness detection": "Darkness detection",
+    "Darkness threshold (lux)": "Darkness threshold (lux)",
+    "Use global sensor": "Use global sensor"
 }

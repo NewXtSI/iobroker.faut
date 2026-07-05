@@ -107,6 +107,14 @@ class Faut extends utils.Adapter {
                 if (cfg.dpLux)
                     this.dpToStateMap.set(cfg.dpLux, `${relId}.lux`);
             }
+            else if (node.type === 'Bewegung') {
+                if (cfg.dpBewegung)
+                    this.dpToStateMap.set(cfg.dpBewegung, `${relId}.motion`);
+            }
+            else if (node.type === 'Fenster/Tür') {
+                if (cfg.dpFensterTuer)
+                    this.dpToStateMap.set(cfg.dpFensterTuer, `${relId}.open`);
+            }
             if (node.children?.length)
                 this.collectDpMappings(node.children, relId);
         }
@@ -191,6 +199,7 @@ class Faut extends utils.Adapter {
                     write: false,
                     ...(spec.unit !== undefined ? { unit: spec.unit } : {}),
                     ...(spec.def !== undefined ? { def: spec.def } : {}),
+                    ...(spec.states !== undefined ? { states: spec.states } : {}),
                 },
                 native: {
                     fautStateKey: spec.id,
@@ -199,7 +208,6 @@ class Faut extends utils.Adapter {
             });
         }
     }
-    /** Returns the list of state definitions that should exist under a sensor node. */
     getSensorStateSpecs(nodeType, cfg) {
         const specs = [];
         // Type-specific value states
@@ -213,11 +221,35 @@ class Faut extends utils.Adapter {
             if (cfg.dpLux)
                 specs.push({ id: 'lux', name: 'Lux', dataType: 'number', role: 'value.brightness', unit: 'lux' });
         }
-        // Common sensor states
-        if (cfg.batteriebetrieben)
-            specs.push({ id: 'lowBat', name: 'Low Battery', dataType: 'boolean', role: 'indicator.lowbat', def: false });
-        if (cfg.erreichbarkeit)
-            specs.push({ id: 'unreach', name: 'Unreachable', dataType: 'boolean', role: 'indicator.unreach', def: false });
+        else if (nodeType === 'Bewegung') {
+            if (cfg.dpBewegung)
+                specs.push({ id: 'motion', name: 'Motion', dataType: 'boolean', role: 'sensor.motion', def: false });
+        }
+        else if (nodeType === 'Fenster/Tür') {
+            if (cfg.dpFensterTuer)
+                specs.push({ id: 'open', name: 'Open', dataType: 'boolean', role: 'sensor.door', def: false });
+        }
+        else if (nodeType === 'Raum') {
+            if (cfg.bewegungserkennung) {
+                specs.push({
+                    id: 'presence', name: 'Presence', dataType: 'string', role: 'text', def: 'absent',
+                    states: { absent: 'Absent', cooldown: 'Cooldown', present: 'Present' },
+                });
+            }
+            if (cfg.dunkelheitserkennung) {
+                specs.push({
+                    id: 'dark', name: 'Dark', dataType: 'string', role: 'text', def: 'bright',
+                    states: { dark: 'Dark', twilight: 'Twilight', bright: 'Bright' },
+                });
+            }
+        }
+        // Common sensor states (all leaf sensor types, not Raum)
+        if (nodeType !== 'Raum') {
+            if (cfg.batteriebetrieben)
+                specs.push({ id: 'lowBat', name: 'Low Battery', dataType: 'boolean', role: 'indicator.lowbat', def: false });
+            if (cfg.erreichbarkeit)
+                specs.push({ id: 'unreach', name: 'Unreachable', dataType: 'boolean', role: 'indicator.unreach', def: false });
+        }
         return specs;
     }
     // ---- lifecycle ----
