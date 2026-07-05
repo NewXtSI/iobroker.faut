@@ -12,6 +12,7 @@ iobroker.*.tgz
 
 Thumbs.db
 .commitinfo
+.commitmsg
 
 # Build output is intentionally committed so ioBroker can install directly from GitHub.
 # Uncomment the lines below if you switch to a CI/CD pipeline that publishes to npm instead.
