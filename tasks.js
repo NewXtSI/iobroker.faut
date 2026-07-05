@@ -19,16 +19,22 @@ async function buildReactVite() {
 }
 
 async function copyAdmin() {
-    // Copy built files to admin/ (excluding index.html - handled separately)
     console.log('Copying build to admin/...');
-    deleteFoldersRecursive(path.join(adminDir, 'assets'));
-    await copyFiles(
-        [
-            `${srcAdminDir}/build/**/*`,
-            `!${srcAdminDir}/build/index.html`,
-        ],
-        adminDir,
-    );
+
+    // Manual copy: workaround for @iobroker/build-tools bug on Windows
+    // (drive-letter case mismatch between path.join and globSync causes doubled paths).
+    const buildAssetsDir = path.join(srcAdminDir, 'build', 'assets');
+    const adminAssetsDir = path.join(adminDir, 'assets');
+
+    deleteFoldersRecursive(adminAssetsDir);
+    if (!fs.existsSync(adminAssetsDir)) fs.mkdirSync(adminAssetsDir, { recursive: true });
+
+    for (const file of fs.readdirSync(buildAssetsDir)) {
+        const src  = path.join(buildAssetsDir, file);
+        const dest = path.join(adminAssetsDir, file);
+        fs.copyFileSync(src, dest);
+        console.log(`[${new Date().toISOString()}] Copy "${src}" to "${dest}"`);
+    }
 
     // Patch index.html in-place (replaces dynamic socket.io script with static path ../../lib/js/socket.io.js)
     // then copy as index_m.html
