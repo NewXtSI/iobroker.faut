@@ -22,10 +22,28 @@ export type FautNodeType =
     | 'Ventilator'
     | 'Lampe';
 
+export interface FautNodeConfig {
+    // Temperatur-specific
+    dpTemperatur?: string;
+    dpLuftfeuchtigkeit?: string;
+    // Helligkeit-specific
+    dpLux?: string;
+    // Bewegung-specific
+    dpBewegung?: string;
+    // Fenster/Tür-specific
+    dpFensterTuer?: string;
+    // Common for all sensors
+    batteriebetrieben?: boolean;
+    dpBatterie?: string;
+    erreichbarkeit?: boolean;
+    dpErreichbarkeit?: string;
+}
+
 export interface FautTreeNode {
     id: string;
     type: FautNodeType;
     /** User-given display name */
     label: string;
+    config?: FautNodeConfig;
     children?: FautTreeNode[];
 }
