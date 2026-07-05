@@ -1,8 +1,11 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
-import App from './app';
+import App from './App';
+
+window.adapterName = 'faut';
 
 const container = document.getElementById('root');
 if (container) {
-	createRoot(container).render(<App adapterName="faut" />);
+    const root = createRoot(container);
+    root.render(<App />);
 }
