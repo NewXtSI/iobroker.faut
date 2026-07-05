@@ -37,6 +37,7 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 const utils = __importStar(require("@iobroker/adapter-core"));
+const SunCalc = __importStar(require("suncalc2"));
 /** After this many ms without a trigger-DP update the sensor is considered unreachable. */
 const UNREACH_TIMEOUT_MS = 1_800_000; // 30 minutes
 class Faut extends utils.Adapter {
@@ -58,6 +59,13 @@ class Faut extends utils.Adapter {
     dpToUnreachMap = new Map();
     /** Active unreach timers, keyed by own unreach-state relId. */
     unreachTimers = new Map();
+    /** RelIds of all Sonne nodes (for sun state updates). */
+    sunNodeRelIds = [];
+    /** 5-minute interval timer for sun position updates. */
+    sunIntervalTimer = null;
+    /** Geo position read from system.config. */
+    sunLat = 0;
+    sunLng = 0;
     constructor(options = {}) {
         super({
             ...options,
@@ -79,6 +87,7 @@ class Faut extends utils.Adapter {
             return;
         }
         await this.setupSensorSubscriptions();
+        await this.setupSunNodes();
     }
     // ---- sensor subscriptions ----
     /**
@@ -429,6 +438,70 @@ class Faut extends utils.Adapter {
             return 'bright';
         return 'twilight';
     }
+    // ---- sun (Sonne) ----
+    /** Collects all Sonne node relIds from the tree. */
+    collectSunNodes(nodes, prefix) {
+        for (const node of nodes) {
+            const relId = prefix ? `${prefix}.${node.id}` : node.id;
+            if (node.type === 'Sonne')
+                this.sunNodeRelIds.push(relId);
+            if (node.children?.length)
+                this.collectSunNodes(node.children, relId);
+        }
+    }
+    /**
+     * Sets up sun position updates for all Sonne nodes.
+     * Reads geo position from system.config, computes initial values,
+     * then refreshes elevation + azimuth every 5 minutes.
+     */
+    async setupSunNodes() {
+        const tree = Array.isArray(this.config.grundstueck)
+            ? this.config.grundstueck
+            : [];
+        this.collectSunNodes(tree, '');
+        if (this.sunNodeRelIds.length === 0)
+            return;
+        // Read geo position from ioBroker system config
+        try {
+            const sysCfg = await this.getForeignObjectAsync('system.config');
+            const common = (sysCfg?.common ?? {});
+            this.sunLat = typeof common.latitude === 'number' ? common.latitude : 0;
+            this.sunLng = typeof common.longitude === 'number' ? common.longitude : 0;
+        }
+        catch (e) {
+            this.log.warn(`Could not read system.config for geo position: ${e.message}`);
+        }
+        if (this.sunLat === 0 && this.sunLng === 0) {
+            this.log.warn('No geo position set in ioBroker system settings – sun calculation disabled.');
+            return;
+        }
+        this.log.info(`Sun nodes: ${this.sunNodeRelIds.length}, position: ${this.sunLat}°N ${this.sunLng}°E`);
+        await this.updateSunStates();
+        this.sunIntervalTimer = setInterval(() => {
+            this.updateSunStates().catch(e => {
+                this.log.error(`Sun update error: ${e.message}`);
+            });
+        }, 5 * 60_000);
+    }
+    /** Calculates and writes all sun states for the current moment. */
+    async updateSunStates() {
+        const now = new Date();
+        const times = SunCalc.getTimes(now, this.sunLat, this.sunLng);
+        const pos = SunCalc.getPosition(now, this.sunLat, this.sunLng);
+        const pad = (n) => String(Math.floor(n)).padStart(2, '0');
+        const fmtTime = (d) => isNaN(d.getTime()) ? '--:--' : `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+        const sunriseStr = fmtTime(times.sunrise);
+        const sunsetStr = fmtTime(times.sunset);
+        // suncalc2 altitude = radians above horizon; azimuth = radians from south (positive=west)
+        const elevation = Math.round(pos.altitude * (180 / Math.PI) * 100) / 100;
+        const azimuth = Math.round(((pos.azimuth * (180 / Math.PI)) + 180) * 100) / 100;
+        for (const relId of this.sunNodeRelIds) {
+            await this.setStateAsync(`${relId}.sunrise`, { val: sunriseStr, ack: true });
+            await this.setStateAsync(`${relId}.sunset`, { val: sunsetStr, ack: true });
+            await this.setStateAsync(`${relId}.elevation`, { val: elevation, ack: true });
+            await this.setStateAsync(`${relId}.azimuth`, { val: azimuth, ack: true });
+        }
+    }
     // ---- tree → objects sync ----
     /**
      * Synchronises the tree stored in native.grundstueck to ioBroker folder objects.
@@ -539,6 +612,12 @@ class Faut extends utils.Adapter {
             if (cfg.dpFensterTuer)
                 specs.push({ id: 'open', name: 'Open', dataType: 'boolean', role: 'sensor.door', def: false });
         }
+        else if (nodeType === 'Sonne') {
+            specs.push({ id: 'sunrise', name: 'Sunrise', dataType: 'string', role: 'text' });
+            specs.push({ id: 'sunset', name: 'Sunset', dataType: 'string', role: 'text' });
+            specs.push({ id: 'elevation', name: 'Elevation', dataType: 'number', role: 'value', unit: '°' });
+            specs.push({ id: 'azimuth', name: 'Azimuth', dataType: 'number', role: 'value', unit: '°' });
+        }
         else if (nodeType === 'Raum') {
             if (cfg.bewegungserkennung) {
                 specs.push({
@@ -553,8 +632,8 @@ class Faut extends utils.Adapter {
                 });
             }
         }
-        // Common sensor states (all leaf sensor types, not Raum)
-        if (nodeType !== 'Raum') {
+        // Common sensor states (all leaf sensor types, not Raum or Sonne)
+        if (nodeType !== 'Raum' && nodeType !== 'Sonne') {
             if (cfg.batteriebetrieben)
                 specs.push({ id: 'lowBat', name: 'Low Battery', dataType: 'boolean', role: 'indicator.lowbat', def: false });
             if (cfg.erreichbarkeit)
@@ -574,6 +653,9 @@ class Faut extends utils.Adapter {
             // Clear all running unreach timers
             for (const timer of this.unreachTimers.values())
                 clearTimeout(timer);
+            // Clear sun interval
+            if (this.sunIntervalTimer !== null)
+                clearInterval(this.sunIntervalTimer);
             callback();
         }
         catch (error) {

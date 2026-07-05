@@ -17,6 +17,7 @@ export type FautNodeType =
     | 'Regen'
     | 'Bewegung'
     | 'Fenster/Tür'
+    | 'Sonne'
     // Actors
     | 'Thermostat'
     | 'Rolladen'
@@ -48,6 +49,7 @@ export const NODE_TYPE_DEFS: Record<FautNodeType, NodeTypeDef> = {
     Regen:           { label: 'Regen (Sensor)',      kind: 'sensor' },
     Bewegung:        { label: 'Bewegung (Sensor)',   kind: 'sensor' },
     'Fenster/Tür':   { label: 'Fenster/Tür (Sensor)', kind: 'sensor' },
+    Sonne:           { label: 'Sonne (Sensor)',       kind: 'sensor' },
     // Actors
     Thermostat:      { label: 'Thermostat (Aktor)',  kind: 'actor' },
     Rolladen:        { label: 'Rolladen (Aktor)',    kind: 'actor' },
@@ -58,11 +60,11 @@ export const NODE_TYPE_DEFS: Record<FautNodeType, NodeTypeDef> = {
 /** Which types may be created as direct children of each parent type (or root) */
 export const ALLOWED_CHILDREN: Record<'root' | FautNodeType, FautNodeType[]> = {
     root:           ['Garten', 'Gebäude', 'Heizung', 'Energie', 'Umwelt', 'Person'],
-    Garten:         [],
+    Garten:         ['Sonne'],
     Gebäude:        ['Etage', 'Raum'],
     Heizung:        [],
     Energie:        [],
-    Umwelt:         ['Temperatur', 'Helligkeit', 'Regen'],
+    Umwelt:         ['Temperatur', 'Helligkeit', 'Regen', 'Sonne'],
     Person:         [],
     Etage:          ['Raum'],
     Raum:           ['Temperatur', 'Helligkeit', 'Bewegung', 'Fenster/Tür', 'Thermostat', 'Rolladen', 'Ventilator', 'Lampe'],
@@ -71,6 +73,7 @@ export const ALLOWED_CHILDREN: Record<'root' | FautNodeType, FautNodeType[]> = {
     Regen:          [],
     Bewegung:       [],
     'Fenster/Tür':  [],
+    Sonne:          [],
     Thermostat:     [],
     Rolladen:       [],
     Ventilator:     [],
