@@ -7,6 +7,8 @@ declare global {
 			aktiviert: boolean;
 			/** Steuerung aktiviert (nur wenn aktiviert = true) */
 			steuerungAktiviert: boolean;
+			/** Grundstück-Baumstruktur (serialisierte FautTreeNode[]) */
+			grundstueck: any[];
 		}
 	}
 }

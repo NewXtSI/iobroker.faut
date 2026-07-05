@@ -54,7 +54,8 @@
 	},
 	"native": {
 		"aktiviert": false,
-		"steuerungAktiviert": false
+		"steuerungAktiviert": false,
+		"grundstueck": []
 	},
 	"objects": [],
 	"instanceObjects": []
