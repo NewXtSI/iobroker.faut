@@ -53,7 +53,64 @@ class Faut extends utils.Adapter {
     async onReady() {
         this.log.info('Faut adapter started');
         this.setState('info.connection', { val: true, ack: true });
+        await this.syncTreeToObjects();
     }
+    // ---- tree → objects sync ----
+    /**
+     * Synchronises the tree stored in native.grundstueck to ioBroker folder objects.
+     * Creates missing folders, updates renamed ones, removes deleted ones.
+     */
+    async syncTreeToObjects() {
+        const tree = Array.isArray(this.config.grundstueck)
+            ? this.config.grundstueck
+            : [];
+        // 1. Create / update all objects in the tree and collect expected IDs
+        const expectedIds = new Set();
+        await this.processTreeNodes(tree, '', expectedIds);
+        // 2. Remove objects that are no longer in the tree
+        //    Only touch objects we own (marked via native.fautNodeId).
+        const allObjects = await this.getAdapterObjectsAsync();
+        const toDelete = [];
+        for (const [fullId, obj] of Object.entries(allObjects)) {
+            if (obj.type === 'folder' && obj.native?.fautNodeId) {
+                // Convert "faut.0.some.path" → "some.path"
+                const relId = fullId.slice(this.namespace.length + 1);
+                if (!expectedIds.has(relId)) {
+                    toDelete.push(relId);
+                }
+            }
+        }
+        // Delete deepest paths first so parents are not removed before children
+        toDelete.sort((a, b) => b.length - a.length);
+        for (const relId of toDelete) {
+            this.log.info(`Removing obsolete object: ${this.namespace}.${relId}`);
+            await this.delObjectAsync(relId);
+        }
+        this.log.info(`Tree sync complete: ${expectedIds.size} folder(s), ${toDelete.length} removed.`);
+    }
+    /**
+     * Recursively creates / updates folder objects for the given nodes.
+     */
+    async processTreeNodes(nodes, prefix, expectedIds) {
+        for (const node of nodes) {
+            const relId = prefix ? `${prefix}.${node.id}` : node.id;
+            expectedIds.add(relId);
+            await this.extendObjectAsync(relId, {
+                type: 'folder',
+                common: {
+                    name: node.label,
+                },
+                native: {
+                    fautNodeId: node.id,
+                    fautNodeType: node.type,
+                },
+            });
+            if (node.children?.length) {
+                await this.processTreeNodes(node.children, relId, expectedIds);
+            }
+        }
+    }
+    // ---- lifecycle ----
     /**
      * Is called when adapter shuts down – callback must be called under any circumstances!
      */
