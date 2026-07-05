@@ -6,6 +6,9 @@ import * as utils from '@iobroker/adapter-core';
 import { type FautNodeConfig, type FautTreeNode } from './lib/treeTypes';
 
 class Faut extends utils.Adapter {
+	/** Maps a foreign state ID (source DP) to the relative ID of our own state. */
+	private readonly dpToStateMap = new Map<string, string>();
+
 	public constructor(options: Partial<utils.AdapterOptions> = {}) {
 		super({
 			...options,
@@ -23,6 +26,65 @@ class Faut extends utils.Adapter {
 		this.log.info('Faut adapter started');
 		this.setState('info.connection', { val: true, ack: true });
 		await this.syncTreeToObjects();
+
+		if (!this.config.aktiviert) {
+			this.log.info('Adapter inactive (aktiviert = false) – no sensor subscriptions.');
+			return;
+		}
+
+		await this.setupSensorSubscriptions();
+	}
+
+	// ---- sensor subscriptions ----
+
+	/**
+	 * Subscribes to all configured source data points and reads their current values.
+	 * Only called when aktiviert = true.
+	 */
+	private async setupSensorSubscriptions(): Promise<void> {
+		const tree: FautTreeNode[] = Array.isArray(this.config.grundstueck)
+			? (this.config.grundstueck as FautTreeNode[])
+			: [];
+
+		this.collectDpMappings(tree, '');
+
+		if (this.dpToStateMap.size === 0) {
+			this.log.info('No sensor data points configured.');
+			return;
+		}
+
+		this.log.info(`Subscribing to ${this.dpToStateMap.size} sensor data point(s).`);
+
+		for (const [dpId, ownRelId] of this.dpToStateMap) {
+			this.subscribeForeignStates(dpId);
+			try {
+				const state = await this.getForeignStateAsync(dpId);
+				if (state?.val !== null && state?.val !== undefined) {
+					await this.setStateAsync(ownRelId, { val: state.val, ack: true });
+				}
+			} catch (e) {
+				this.log.warn(`Initial read failed for ${dpId}: ${(e as Error).message}`);
+			}
+		}
+	}
+
+	/**
+	 * Recursively collects (foreignDpId → ownStateRelId) mappings from the tree.
+	 */
+	private collectDpMappings(nodes: FautTreeNode[], prefix: string): void {
+		for (const node of nodes) {
+			const relId = prefix ? `${prefix}.${node.id}` : node.id;
+			const cfg: FautNodeConfig = (node.config as FautNodeConfig | undefined) ?? {};
+
+			if (node.type === 'Temperatur') {
+				if (cfg.dpTemperatur)       this.dpToStateMap.set(cfg.dpTemperatur,       `${relId}.temperature`);
+				if (cfg.dpLuftfeuchtigkeit) this.dpToStateMap.set(cfg.dpLuftfeuchtigkeit, `${relId}.humidity`);
+			} else if (node.type === 'Helligkeit') {
+				if (cfg.dpLux)              this.dpToStateMap.set(cfg.dpLux,              `${relId}.lux`);
+			}
+
+			if (node.children?.length) this.collectDpMappings(node.children, relId);
+		}
 	}
 
 	// ---- tree → objects sync ----
@@ -176,11 +238,14 @@ class Faut extends utils.Adapter {
 	 * Is called if a subscribed state changes.
 	 */
 	private onStateChange(id: string, state: ioBroker.State | null | undefined): void {
-		if (state) {
-			this.log.info(`state ${id} changed: ${state.val} (ack = ${state.ack})`);
-		} else {
-			this.log.info(`state ${id} deleted`);
-		}
+		if (!state) return; // state deleted, nothing to mirror
+
+		const ownRelId = this.dpToStateMap.get(id);
+		if (!ownRelId) return; // not one of our tracked source DPs
+
+		this.setStateAsync(ownRelId, { val: state.val, ack: true }).catch(e => {
+			this.log.error(`Failed to mirror ${id} → ${ownRelId}: ${(e as Error).message}`);
+		});
 	}
 }
 
