@@ -72,7 +72,10 @@ class Faut extends utils.Adapter {
         const allObjects = await this.getAdapterObjectsAsync();
         const toDelete = [];
         for (const [fullId, obj] of Object.entries(allObjects)) {
-            if (obj.type === 'folder' && obj.native?.fautNodeId) {
+            const native = obj.native;
+            const isFautManaged = (obj.type === 'folder' && native?.fautNodeId) ||
+                (obj.type === 'state' && native?.fautStateKey);
+            if (isFautManaged) {
                 // Convert "faut.0.some.path" → "some.path"
                 const relId = fullId.slice(this.namespace.length + 1);
                 if (!expectedIds.has(relId)) {
@@ -86,7 +89,7 @@ class Faut extends utils.Adapter {
             this.log.info(`Removing obsolete object: ${this.namespace}.${relId}`);
             await this.delObjectAsync(relId);
         }
-        this.log.info(`Tree sync complete: ${expectedIds.size} folder(s), ${toDelete.length} removed.`);
+        this.log.info(`Tree sync complete: ${expectedIds.size} object(s) expected, ${toDelete.length} removed.`);
     }
     /**
      * Recursively creates / updates folder objects for the given nodes.
@@ -105,10 +108,61 @@ class Faut extends utils.Adapter {
                     fautNodeType: node.type,
                 },
             });
+            // Create sensor states based on node config
+            await this.syncSensorStates(node, relId, expectedIds);
             if (node.children?.length) {
                 await this.processTreeNodes(node.children, relId, expectedIds);
             }
         }
+    }
+    /**
+     * Creates / updates ioBroker state objects for a sensor node.
+     * States are only created when the corresponding config field is populated.
+     */
+    async syncSensorStates(node, folderRelId, expectedIds) {
+        const cfg = node.config ?? {};
+        const specs = this.getSensorStateSpecs(node.type, cfg);
+        for (const spec of specs) {
+            const stateRelId = `${folderRelId}.${spec.id}`;
+            expectedIds.add(stateRelId);
+            await this.extendObjectAsync(stateRelId, {
+                type: 'state',
+                common: {
+                    name: spec.name,
+                    type: spec.dataType,
+                    role: spec.role,
+                    read: true,
+                    write: false,
+                    ...(spec.unit !== undefined ? { unit: spec.unit } : {}),
+                    ...(spec.def !== undefined ? { def: spec.def } : {}),
+                },
+                native: {
+                    fautStateKey: spec.id,
+                    fautNodeId: node.id,
+                },
+            });
+        }
+    }
+    /** Returns the list of state definitions that should exist under a sensor node. */
+    getSensorStateSpecs(nodeType, cfg) {
+        const specs = [];
+        // Type-specific value states
+        if (nodeType === 'Temperatur') {
+            if (cfg.dpTemperatur)
+                specs.push({ id: 'temperature', name: 'Temperature', dataType: 'number', role: 'value.temperature', unit: '°C' });
+            if (cfg.dpLuftfeuchtigkeit)
+                specs.push({ id: 'humidity', name: 'Humidity', dataType: 'number', role: 'value.humidity', unit: '%' });
+        }
+        else if (nodeType === 'Helligkeit') {
+            if (cfg.dpLux)
+                specs.push({ id: 'lux', name: 'Lux', dataType: 'number', role: 'value.brightness', unit: 'lux' });
+        }
+        // Common sensor states
+        if (cfg.batteriebetrieben)
+            specs.push({ id: 'lowBat', name: 'Low Battery', dataType: 'boolean', role: 'indicator.lowbat', def: false });
+        if (cfg.erreichbarkeit)
+            specs.push({ id: 'unreach', name: 'Unreachable', dataType: 'boolean', role: 'indicator.unreach', def: false });
+        return specs;
     }
     // ---- lifecycle ----
     /**
