@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Box, Checkbox, Divider, FormControlLabel, Stack } from '@mui/material';
+import { Box, Checkbox, Divider, FormControlLabel, Stack, TextField } from '@mui/material';
 import { DialogSelectID, I18n, type IobTheme } from '@iobroker/adapter-react-v5';
 import { type FautNodeConfig, type FautTreeNode } from '../types/treeTypes';
 import DpField from './DpField';
@@ -30,6 +30,26 @@ export default function RolladenDetailPanel({ node, socket, theme, onConfigChang
                 value={(cfg.dpPosition as string | undefined) ?? ''}
                 onChange={v => onConfigChange('dpPosition', v)}
                 onSelect={() => openSelect('dpPosition')}
+            />
+
+            {/* Sun/heat block positions */}
+            <TextField
+                label={I18n.t('Sunblock position (%)')}
+                type="number"
+                size="small"
+                value={cfg.sunblockPosition ?? 20}
+                onChange={e => onConfigChange('sunblockPosition', Math.min(100, Math.max(0, Number(e.target.value))))}
+                inputProps={{ min: 0, max: 100 }}
+                sx={{ width: 200 }}
+            />
+            <TextField
+                label={I18n.t('Heatblock position (%)')}
+                type="number"
+                size="small"
+                value={cfg.heatblockPosition ?? 0}
+                onChange={e => onConfigChange('heatblockPosition', Math.min(100, Math.max(0, Number(e.target.value))))}
+                inputProps={{ min: 0, max: 100 }}
+                sx={{ width: 200 }}
             />
 
             <Divider />

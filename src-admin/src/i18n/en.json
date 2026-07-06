@@ -43,6 +43,8 @@
     "Glare protection": "Glare protection",
     "Heat protection": "Heat protection",
     "DP Position": "DP Position",
+    "Sunblock position (%)": "Sunblock position (%)",
+    "Heatblock position (%)": "Heatblock position (%)",
     "Log flags": "Log flags",
     "Log flags description": "Activating a flag enables detailed log output for the respective module. Extended includes basic.",
     "Log shutter init and state changes": "Initialization and internal state changes",

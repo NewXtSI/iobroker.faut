@@ -43,6 +43,8 @@
     "Glare protection": "Blendschutz",
     "Heat protection": "Hitzeschutz",
     "DP Position": "Datenpunkt Position",
+    "Sunblock position (%)": "Sonnenschutz-Position (%)",
+    "Heatblock position (%)": "Hitzeschutz-Position (%)",
     "Log flags": "Log-Flags",
     "Log flags description": "Aktivierung eines Flags ermöglicht detaillierte Log-Ausgaben für das jeweilige Modul. Extended schließt Basic ein.",
     "Log shutter init and state changes": "Initialisierung und interne Statusänderungen",

@@ -95,6 +95,8 @@ export interface FautNodeConfig {
     dpFensterTuer?: string;
     // Rolladen-specific
     dpPosition?: string;
+    sunblockPosition?: number;
+    heatblockPosition?: number;
     // Common for all sensors/actors
     batteriebetrieben?: boolean;
     dpBatterie?: string;
