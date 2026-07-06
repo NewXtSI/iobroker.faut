@@ -4,22 +4,7 @@
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <title>faut adapter settings</title>
-        <script>
-            var script = document.createElement('script');
-            window.registerSocketOnLoad = function (cb) {
-                window.socketLoadedHandler = cb;
-            };
-            script.onload = function () {
-                typeof window.socketLoadedHandler === 'function' && window.socketLoadedHandler();
-            };
-            setTimeout(function () {
-                script.src =
-                    window.location.port === '3000'
-                        ? window.location.protocol + '//' + window.location.hostname + ':8081/lib/js/socket.io.js'
-                        : '../../lib/js/socket.io.js';
-            }, 100);
-            document.head.appendChild(script);
-        </script>
+        <script type="text/javascript" onerror="setTimeout(function(){window.location.reload()}, 5000)" src="../../lib/js/socket.io.js"></script>
       <script type="module" crossorigin src="./assets/index-0iKJvSLz.js"></script>
     </head>
     <body>
