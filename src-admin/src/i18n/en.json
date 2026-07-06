@@ -28,5 +28,11 @@
     "Motion cooldown (min)": "Motion cooldown (min)",
     "Darkness detection": "Darkness detection",
     "Darkness threshold (lux)": "Darkness threshold (lux)",
-    "Use global sensor": "Use global sensor"
+    "Use global sensor": "Use global sensor",
+    "Global": "Global",
+    "Debug": "Debug",
+    "Debug information will appear here.": "Debug information will appear here.",
+    "Night mode": "Night mode",
+    "Night mode description": "The night mode state is mirrored from/to the configured data point. Writing faut.0.global.nightMode also sets the external DP.",
+    "DP Night mode": "DP Night mode"
 }

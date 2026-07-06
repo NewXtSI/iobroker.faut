@@ -28,5 +28,11 @@
     "Motion cooldown (min)": "Bewegungs-Cooldown (Min)",
     "Darkness detection": "Dunkelheitserkennung",
     "Darkness threshold (lux)": "Dunkelgrenze (Lux)",
-    "Use global sensor": "Globalen Sensor benutzen"
+    "Use global sensor": "Globalen Sensor benutzen",
+    "Global": "Global",
+    "Debug": "Debug",
+    "Debug information will appear here.": "Debug-Informationen erscheinen hier.",
+    "Night mode": "Nachtmodus",
+    "Night mode description": "Der Nachtmodus wird mit dem konfigurierten Datenpunkt synchronisiert. Das Setzen von faut.0.global.nightMode schreibt auch den externen Datenpunkt.",
+    "DP Night mode": "Datenpunkt Nachtmodus"
 }

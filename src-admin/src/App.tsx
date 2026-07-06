@@ -14,6 +14,8 @@ import {
 
 import TabGeneral from './Tabs/TabGeneral';
 import TabGrundstueck from './Tabs/TabGrundstueck';
+import TabGlobal from './Tabs/TabGlobal';
+import TabDebug from './Tabs/TabDebug';
 
 import enLang from './i18n/en.json';
 import deLang from './i18n/de.json';
@@ -90,6 +92,8 @@ export default class App extends GenericApp<GenericAppProps, AppState> {
                             >
                                 <Tab value="general" label={I18n.t('General')} data-name="general" />
                                 <Tab value="grundstueck" label={I18n.t('Property')} data-name="grundstueck" />
+                                <Tab value="global" label={I18n.t('Global')} data-name="global" />
+                                <Tab value="debug" label={I18n.t('Debug')} data-name="debug" />
                             </Tabs>
                         </AppBar>
 
@@ -111,6 +115,29 @@ export default class App extends GenericApp<GenericAppProps, AppState> {
                                     common={this.common!}
                                     socket={this.socket}
                                     theme={this.state.theme}
+                                    native={this.state.native}
+                                    instance={this.instance}
+                                    adapterName={this.adapterName}
+                                    onChange={(attr, value) => this.updateNativeValue(attr, value)}
+                                />
+                            )}
+                            {this.state.selectedTab === 'global' && (
+                                <TabGlobal
+                                    key="global"
+                                    common={this.common!}
+                                    socket={this.socket}
+                                    theme={this.state.theme}
+                                    native={this.state.native}
+                                    instance={this.instance}
+                                    adapterName={this.adapterName}
+                                    onChange={(attr, value) => this.updateNativeValue(attr, value)}
+                                />
+                            )}
+                            {this.state.selectedTab === 'debug' && (
+                                <TabDebug
+                                    key="debug"
+                                    common={this.common!}
+                                    socket={this.socket}
                                     native={this.state.native}
                                     instance={this.instance}
                                     adapterName={this.adapterName}

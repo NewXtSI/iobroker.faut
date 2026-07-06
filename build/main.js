@@ -66,6 +66,8 @@ class Faut extends utils.Adapter {
     /** Geo position read from system.config. */
     sunLat = 0;
     sunLng = 0;
+    /** External DP for night mode (from config.dpNachtmodus). */
+    nightModeDpId = '';
     constructor(options = {}) {
         super({
             ...options,
@@ -82,6 +84,7 @@ class Faut extends utils.Adapter {
         this.log.info('Faut adapter started');
         this.setState('info.connection', { val: true, ack: true });
         await this.syncTreeToObjects();
+        await this.setupGlobalStates();
         if (!this.config.aktiviert) {
             this.log.info('Adapter inactive (aktiviert = false) – no sensor subscriptions.');
             return;
@@ -90,6 +93,48 @@ class Faut extends utils.Adapter {
         await this.setupSunNodes();
     }
     // ---- sensor subscriptions ----
+    /**
+     * Creates the global folder + nightMode state and wires up the external DP.
+     * Runs unconditionally (independent of the aktiviert flag).
+     */
+    async setupGlobalStates() {
+        // Create global folder
+        await this.extendObjectAsync('global', {
+            type: 'folder',
+            common: { name: 'Global' },
+            native: {},
+        });
+        // Create nightMode state (read + write)
+        await this.extendObjectAsync('global.nightMode', {
+            type: 'state',
+            common: {
+                name: 'Night Mode',
+                type: 'boolean',
+                role: 'switch',
+                read: true,
+                write: true,
+                def: false,
+            },
+            native: {},
+        });
+        // Subscribe to own state so write-through can be triggered
+        this.subscribeStates('global.nightMode');
+        const dpId = this.config.dpNachtmodus ?? '';
+        this.nightModeDpId = dpId;
+        if (!dpId)
+            return;
+        // Subscribe external DP and mirror initial value
+        this.subscribeForeignStates(dpId);
+        try {
+            const state = await this.getForeignStateAsync(dpId);
+            if (state?.val !== null && state?.val !== undefined) {
+                await this.setStateAsync('global.nightMode', { val: !!state.val, ack: true });
+            }
+        }
+        catch (e) {
+            this.log.warn(`Initial night mode read failed for ${dpId}: ${e.message}`);
+        }
+    }
     /**
      * Subscribes to all configured source data points and reads their current values.
      * Only called when aktiviert = true.
@@ -711,6 +756,19 @@ class Faut extends utils.Adapter {
                 this.log.error(`Unreach clear failed for ${unreachRelId}: ${e.message}`);
             });
             this.startUnreachTimer(unreachRelId, UNREACH_TIMEOUT_MS);
+        }
+        // Night mode: external DP changed → mirror to own state
+        if (this.nightModeDpId && id === this.nightModeDpId) {
+            this.setStateAsync('global.nightMode', { val: !!state.val, ack: true }).catch(e => {
+                this.log.error(`Night mode mirror failed: ${e.message}`);
+            });
+            return;
+        }
+        // Night mode: own state written (ack=false) → write-through to external DP
+        if (id === `${this.namespace}.global.nightMode` && !state.ack && this.nightModeDpId) {
+            this.setForeignStateAsync(this.nightModeDpId, { val: !!state.val, ack: false }).catch(e => {
+                this.log.error(`Night mode write-through failed: ${e.message}`);
+            });
         }
     }
 }

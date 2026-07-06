@@ -9,6 +9,8 @@ declare global {
 			steuerungAktiviert: boolean;
 			/** Grundstück-Baumstruktur (serialisierte FautTreeNode[]) */
 			grundstueck: any[];
+			/** Externer Datenpunkt für den Nachtmodus */
+			dpNachtmodus: string;
 		}
 	}
 }

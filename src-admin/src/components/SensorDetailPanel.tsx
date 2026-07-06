@@ -4,14 +4,11 @@ import {
     Checkbox,
     Divider,
     FormControlLabel,
-    IconButton,
-    InputAdornment,
     Stack,
-    TextField,
 } from '@mui/material';
-import MoreHorizIcon from '@mui/icons-material/MoreHoriz';
 import { DialogSelectID, I18n, type IobTheme } from '@iobroker/adapter-react-v5';
 import { type FautNodeConfig, type FautNodeType, type FautTreeNode } from '../types/treeTypes';
+import DpField from './DpField';
 
 // ---- primary DP fields per sensor type ----
 
@@ -31,38 +28,6 @@ const PRIMARY_FIELDS: Partial<Record<FautNodeType, PrimaryField[]>> = {
     Bewegung:      [{ key: 'dpBewegung',    i18nKey: 'DP Motion' }],
     'Fenster/Tür': [{ key: 'dpFensterTuer', i18nKey: 'DP Door/Window' }],
 };
-
-// ---- helper: text field with "..." object-select button ----
-
-interface DpFieldProps {
-    label: string;
-    value: string;
-    onChange: (v: string) => void;
-    onSelect: () => void;
-    sx?: object;
-}
-
-function DpField({ label, value, onChange, onSelect, sx }: DpFieldProps): React.JSX.Element {
-    return (
-        <TextField
-            label={label}
-            fullWidth
-            size="small"
-            value={value}
-            onChange={e => onChange(e.target.value)}
-            sx={sx}
-            InputProps={{
-                endAdornment: (
-                    <InputAdornment position="end">
-                        <IconButton size="small" edge="end" onClick={onSelect} title={I18n.t('Select data point')}>
-                            <MoreHorizIcon fontSize="small" />
-                        </IconButton>
-                    </InputAdornment>
-                ),
-            }}
-        />
-    );
-}
 
 // ---- component ----
 

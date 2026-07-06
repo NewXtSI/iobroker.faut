@@ -44,6 +44,8 @@ class Faut extends utils.Adapter {
 	/** Geo position read from system.config. */
 	private sunLat = 0;
 	private sunLng = 0;
+	/** External DP for night mode (from config.dpNachtmodus). */
+	private nightModeDpId = '';
 
 	public constructor(options: Partial<utils.AdapterOptions> = {}) {
 		super({
@@ -62,6 +64,7 @@ class Faut extends utils.Adapter {
 		this.log.info('Faut adapter started');
 		this.setState('info.connection', { val: true, ack: true });
 		await this.syncTreeToObjects();
+		await this.setupGlobalStates();
 
 		if (!this.config.aktiviert) {
 			this.log.info('Adapter inactive (aktiviert = false) – no sensor subscriptions.');
@@ -73,6 +76,51 @@ class Faut extends utils.Adapter {
 	}
 
 	// ---- sensor subscriptions ----
+
+	/**
+	 * Creates the global folder + nightMode state and wires up the external DP.
+	 * Runs unconditionally (independent of the aktiviert flag).
+	 */
+	private async setupGlobalStates(): Promise<void> {
+		// Create global folder
+		await this.extendObjectAsync('global', {
+			type: 'folder',
+			common: { name: 'Global' },
+			native: {},
+		});
+
+		// Create nightMode state (read + write)
+		await this.extendObjectAsync('global.nightMode', {
+			type: 'state',
+			common: {
+				name:  'Night Mode',
+				type:  'boolean',
+				role:  'switch',
+				read:  true,
+				write: true,
+				def:   false,
+			},
+			native: {},
+		});
+
+		// Subscribe to own state so write-through can be triggered
+		this.subscribeStates('global.nightMode');
+
+		const dpId = (this.config.dpNachtmodus as string | undefined) ?? '';
+		this.nightModeDpId = dpId;
+		if (!dpId) return;
+
+		// Subscribe external DP and mirror initial value
+		this.subscribeForeignStates(dpId);
+		try {
+			const state = await this.getForeignStateAsync(dpId);
+			if (state?.val !== null && state?.val !== undefined) {
+				await this.setStateAsync('global.nightMode', { val: !!state.val, ack: true });
+			}
+		} catch (e) {
+			this.log.warn(`Initial night mode read failed for ${dpId}: ${(e as Error).message}`);
+		}
+	}
 
 	/**
 	 * Subscribes to all configured source data points and reads their current values.
@@ -711,6 +759,21 @@ class Faut extends utils.Adapter {
 				this.log.error(`Unreach clear failed for ${unreachRelId}: ${(e as Error).message}`);
 			});
 			this.startUnreachTimer(unreachRelId, UNREACH_TIMEOUT_MS);
+		}
+
+		// Night mode: external DP changed → mirror to own state
+		if (this.nightModeDpId && id === this.nightModeDpId) {
+			this.setStateAsync('global.nightMode', { val: !!state.val, ack: true }).catch(e => {
+				this.log.error(`Night mode mirror failed: ${(e as Error).message}`);
+			});
+			return;
+		}
+
+		// Night mode: own state written (ack=false) → write-through to external DP
+		if (id === `${this.namespace}.global.nightMode` && !state.ack && this.nightModeDpId) {
+			this.setForeignStateAsync(this.nightModeDpId, { val: !!state.val, ack: false }).catch(e => {
+				this.log.error(`Night mode write-through failed: ${(e as Error).message}`);
+			});
 		}
 	}
 }
