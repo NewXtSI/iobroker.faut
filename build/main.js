@@ -78,6 +78,8 @@ class Faut extends utils.Adapter {
     rolladenPosCfg = new Map();
     /** Daily reschedule timer for shutter sunrise/sunset events. */
     shutterDailyTimer = null;
+    /** Last seen values of foreign DPs – used to suppress duplicate extended-log entries. */
+    dpLastExtValues = new Map();
     constructor(options = {}) {
         super({
             ...options,
@@ -1029,9 +1031,13 @@ class Faut extends utils.Adapter {
             });
             this.startUnreachTimer(unreachRelId, UNREACH_TIMEOUT_MS);
         }
-        // Extended shutter logging: log ALL subscribed foreign state changes
+        // Extended shutter logging: log foreign state changes (only when value differs)
         if (!id.startsWith(`${this.namespace}.`)) {
-            this.logShutterExtended(`DP changed: ${id} = ${JSON.stringify(state.val)}`);
+            const last = this.dpLastExtValues.get(id);
+            if (last !== state.val) {
+                this.dpLastExtValues.set(id, state.val);
+                this.logShutterExtended(`DP changed: ${id} = ${JSON.stringify(state.val)}`);
+            }
         }
         // Night mode: external DP changed → mirror to own state
         if (this.nightModeDpId && id === this.nightModeDpId) {
