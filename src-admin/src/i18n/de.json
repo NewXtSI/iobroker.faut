@@ -34,5 +34,17 @@
     "Debug information will appear here.": "Debug-Informationen erscheinen hier.",
     "Night mode": "Nachtmodus",
     "Night mode description": "Der Nachtmodus wird mit dem konfigurierten Datenpunkt synchronisiert. Das Setzen von faut.0.global.nightMode schreibt auch den externen Datenpunkt.",
-    "DP Night mode": "Datenpunkt Nachtmodus"
+    "DP Night mode": "Datenpunkt Nachtmodus",
+    "Shutter control": "Rolladensteuerung",
+    "Shutter control settings": "Einstellungen Rolladensteuerung",
+    "Direction (degrees)": "Himmelsrichtung (Grad, 0=N 90=O 180=S 270=W)",
+    "Sunrise offset (min)": "Offset Sonnenaufgang (Min)",
+    "Sunset offset (min)": "Offset Sonnenuntergang (Min)",
+    "Glare protection": "Blendschutz",
+    "Heat protection": "Hitzeschutz",
+    "DP Position": "Datenpunkt Position",
+    "Log flags": "Log-Flags",
+    "Log flags description": "Aktivierung eines Flags ermöglicht detaillierte Log-Ausgaben für das jeweilige Modul. Extended schließt Basic ein.",
+    "Log shutter init and state changes": "Initialisierung und interne Statusänderungen",
+    "Additionally log all subscribed input changes": "Zusätzlich alle Änderungen an abonnierten Eingangswerten loggen"
 }

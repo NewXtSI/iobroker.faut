@@ -11,6 +11,10 @@ declare global {
 			grundstueck: any[];
 			/** Externer Datenpunkt für den Nachtmodus */
 			dpNachtmodus: string;
+			/** Log-Flag: Rolladensteuerung */
+			logShuttercontrol: boolean;
+			/** Log-Flag: Rolladensteuerung erweitert */
+			logShuttercontrolExtended: boolean;
 		}
 	}
 }

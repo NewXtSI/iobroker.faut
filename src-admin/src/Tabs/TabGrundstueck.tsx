@@ -51,6 +51,7 @@ import {
 } from '../types/treeTypes';
 import SensorDetailPanel from '../components/SensorDetailPanel';
 import RaumDetailPanel from '../components/RaumDetailPanel';
+import RolladenDetailPanel from '../components/RolladenDetailPanel';
 
 // ---- icon map ----
 
@@ -352,6 +353,20 @@ export default function TabGrundstueck({ native, socket, theme, onChange }: TabG
                         {selectedNode.type === 'Raum' && (
                             <RaumDetailPanel
                                 node={selectedNode}
+                                onConfigChange={(key, value) => {
+                                    const newTree = updateNodeConfig(tree, selectedNode.id, key, value);
+                                    setTree(newTree);
+                                    onChange('grundstueck', newTree);
+                                }}
+                            />
+                        )}
+
+                        {/* Rolladen config */}
+                        {selectedNode.type === 'Rolladen' && (
+                            <RolladenDetailPanel
+                                node={selectedNode}
+                                socket={socket}
+                                theme={theme}
                                 onConfigChange={(key, value) => {
                                     const newTree = updateNodeConfig(tree, selectedNode.id, key, value);
                                     setTree(newTree);

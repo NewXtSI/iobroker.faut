@@ -93,7 +93,9 @@ export interface FautNodeConfig {
     dpBewegung?: string;
     // Fenster/Tür-specific
     dpFensterTuer?: string;
-    // Common for all sensors
+    // Rolladen-specific
+    dpPosition?: string;
+    // Common for all sensors/actors
     batteriebetrieben?: boolean;
     dpBatterie?: string;
     erreichbarkeit?: boolean;
@@ -104,6 +106,13 @@ export interface FautNodeConfig {
     dunkelheitserkennung?: boolean;
     dunkelgrenze?: number;
     globalenSensorBenutzen?: boolean;
+    // Raum shutter control
+    rolladensteuerung?: boolean;
+    himmelsrichtung?: number;
+    rolladenAufgangOffset?: number;
+    rolladenUntergangOffset?: number;
+    blendschutz?: boolean;
+    hitzeschutz?: boolean;
 }
 
 // ---- Tree node ----

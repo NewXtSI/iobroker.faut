@@ -68,6 +68,10 @@ class Faut extends utils.Adapter {
     sunLng = 0;
     /** External DP for night mode (from config.dpNachtmodus). */
     nightModeDpId = '';
+    /** Rooms with active shutter control, keyed by room relId. */
+    shutterRooms = new Map();
+    /** Position DPs of all configured Rolladen (for extended logging). */
+    shutterPositionDpIds = new Set();
     constructor(options = {}) {
         super({
             ...options,
@@ -91,6 +95,7 @@ class Faut extends utils.Adapter {
         }
         await this.setupSensorSubscriptions();
         await this.setupSunNodes();
+        await this.setupShutterControl();
     }
     // ---- sensor subscriptions ----
     /**
@@ -274,6 +279,12 @@ class Faut extends utils.Adapter {
             else if (node.type === 'Fenster/Tür') {
                 if (cfg.dpFensterTuer)
                     this.dpToStateMap.set(cfg.dpFensterTuer, `${relId}.open`);
+            }
+            else if (node.type === 'Rolladen') {
+                if (cfg.dpPosition) {
+                    this.dpToStateMap.set(cfg.dpPosition, `${relId}.position`);
+                    this.shutterPositionDpIds.add(cfg.dpPosition);
+                }
             }
             if (node.children?.length)
                 this.collectDpMappings(node.children, relId);
@@ -547,6 +558,97 @@ class Faut extends utils.Adapter {
             await this.setStateAsync(`${relId}.azimuth`, { val: azimuth, ack: true });
         }
     }
+    // ---- shutter control ----
+    /** Logs a message at debug level when [shuttercontrol] or [shuttercontrol_extended] is active. */
+    logShutter(msg) {
+        if (this.config.logShuttercontrol || this.config.logShuttercontrolExtended) {
+            this.log.debug(`[shuttercontrol] ${msg}`);
+        }
+    }
+    /** Logs a message at debug level only when [shuttercontrol_extended] is active. */
+    logShutterExtended(msg) {
+        if (this.config.logShuttercontrolExtended) {
+            this.log.debug(`[shuttercontrol_extended] ${msg}`);
+        }
+    }
+    /**
+     * Collects all rooms with shutter control configured and logs the found topology.
+     * Does NOT write to any position DP.
+     */
+    async setupShutterControl() {
+        const tree = Array.isArray(this.config.grundstueck)
+            ? this.config.grundstueck
+            : [];
+        this.collectShutterRooms(tree, '');
+        if (this.shutterRooms.size === 0) {
+            this.logShutter('No rooms with shutter control configured.');
+            return;
+        }
+        this.logShutter(`Shutter control active for ${this.shutterRooms.size} room(s).`);
+        for (const room of this.shutterRooms.values()) {
+            this.logShutter(`Room "${room.relId}": direction=${room.himmelsrichtung}°, ` +
+                `riseOffset=${room.aufgangOffset}min, setOffset=${room.untergangOffset}min, ` +
+                `glare=${room.blendschutz}, heat=${room.hitzeschutz}, ` +
+                `shutters=${room.rolladenRelIds.length}`);
+            for (const rel of room.rolladenRelIds) {
+                this.logShutter(`  Rolladen: ${rel}`);
+            }
+        }
+        // Log available sun nodes
+        if (this.sunNodeRelIds.length > 0) {
+            this.logShutter(`Sun node(s) found: ${this.sunNodeRelIds.join(', ')}`);
+        }
+        else {
+            this.logShutter('No sun node found in tree – sun-based control unavailable.');
+        }
+        // Log global lux sensor
+        const globalLuxDpId = this.findGlobalLuxDp(tree);
+        if (globalLuxDpId) {
+            this.logShutter(`Global lux sensor DP: ${globalLuxDpId}`);
+        }
+        else {
+            this.logShutter('No global lux sensor configured.');
+        }
+        // Log night mode
+        if (this.nightModeDpId) {
+            this.logShutter(`Night mode DP: ${this.nightModeDpId}`);
+        }
+        else {
+            this.logShutter('Night mode DP not configured.');
+        }
+    }
+    /** Walks the tree and populates shutterRooms for rooms with rolladensteuerung=true. */
+    collectShutterRooms(nodes, prefix) {
+        for (const node of nodes) {
+            const relId = prefix ? `${prefix}.${node.id}` : node.id;
+            const cfg = node.config ?? {};
+            if (node.type === 'Raum' && cfg.rolladensteuerung) {
+                const rolladenRelIds = [];
+                const rolladenPosDpIds = [];
+                for (const child of node.children ?? []) {
+                    if (child.type === 'Rolladen') {
+                        const childRelId = `${relId}.${child.id}`;
+                        const childCfg = child.config ?? {};
+                        rolladenRelIds.push(childRelId);
+                        if (childCfg.dpPosition)
+                            rolladenPosDpIds.push(childCfg.dpPosition);
+                    }
+                }
+                this.shutterRooms.set(relId, {
+                    relId,
+                    himmelsrichtung: cfg.himmelsrichtung ?? 180,
+                    aufgangOffset: cfg.rolladenAufgangOffset ?? 0,
+                    untergangOffset: cfg.rolladenUntergangOffset ?? 0,
+                    blendschutz: cfg.blendschutz ?? false,
+                    hitzeschutz: cfg.hitzeschutz ?? false,
+                    rolladenRelIds,
+                    rolladenPosDpIds,
+                });
+            }
+            if (node.children?.length)
+                this.collectShutterRooms(node.children, relId);
+        }
+    }
     // ---- tree → objects sync ----
     /**
      * Synchronises the tree stored in native.grundstueck to ioBroker folder objects.
@@ -624,7 +726,7 @@ class Faut extends utils.Adapter {
                     type: spec.dataType,
                     role: spec.role,
                     read: true,
-                    write: false,
+                    write: spec.write ?? false,
                     ...(spec.unit !== undefined ? { unit: spec.unit } : {}),
                     ...(spec.def !== undefined ? { def: spec.def } : {}),
                     ...(spec.states !== undefined ? { states: spec.states } : {}),
@@ -662,6 +764,10 @@ class Faut extends utils.Adapter {
             specs.push({ id: 'sunset', name: 'Sunset', dataType: 'string', role: 'text' });
             specs.push({ id: 'elevation', name: 'Elevation', dataType: 'number', role: 'value', unit: '°' });
             specs.push({ id: 'azimuth', name: 'Azimuth', dataType: 'number', role: 'value', unit: '°' });
+        }
+        else if (nodeType === 'Rolladen') {
+            if (cfg.dpPosition)
+                specs.push({ id: 'position', name: 'Position', dataType: 'number', role: 'level.blind', unit: '%', def: 0, write: true });
         }
         else if (nodeType === 'Raum') {
             if (cfg.bewegungserkennung) {
@@ -756,6 +862,10 @@ class Faut extends utils.Adapter {
                 this.log.error(`Unreach clear failed for ${unreachRelId}: ${e.message}`);
             });
             this.startUnreachTimer(unreachRelId, UNREACH_TIMEOUT_MS);
+        }
+        // Extended shutter logging: log all relevant subscribed input changes
+        if (this.shutterPositionDpIds.has(id)) {
+            this.logShutterExtended(`Position DP changed: ${id} = ${state.val}`);
         }
         // Night mode: external DP changed → mirror to own state
         if (this.nightModeDpId && id === this.nightModeDpId) {
