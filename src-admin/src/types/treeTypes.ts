@@ -94,6 +94,7 @@ export interface FautNodeConfig {
     // Fenster/Tür-specific
     dpFensterTuer?: string;
     // Rolladen-specific
+    aktiviert?: boolean;
     dpPosition?: string;
     sunblockPosition?: number;
     heatblockPosition?: number;

@@ -74,7 +74,7 @@ class Faut extends utils.Adapter {
     shutterPositionDpIds = new Set();
     /** Maps Rolladen own relId → external position DP ID. */
     rolladenRelIdToPosDp = new Map();
-    /** Maps Rolladen own relId → { sunblock%, heatblock% }. */
+    /** Maps Rolladen own relId → { sunblock%, heatblock%, aktiviert }. */
     rolladenPosCfg = new Map();
     /** Daily reschedule timer for shutter sunrise/sunset events. */
     shutterDailyTimer = null;
@@ -721,6 +721,11 @@ class Faut extends utils.Adapter {
      * Skips if the shutter is in manual mode.
      */
     async applyShutterState(rolladenRelId, newState, reason) {
+        // Check if this actuator is enabled
+        if (this.rolladenPosCfg.get(rolladenRelId)?.aktiviert === false) {
+            this.logShutter(`${rolladenRelId}: deaktiviert – ignoring [${reason}]`);
+            return;
+        }
         // Respect manual mode
         try {
             const cur = await this.getStateAsync(`${rolladenRelId}.state`);
@@ -789,6 +794,7 @@ class Faut extends utils.Adapter {
                         this.rolladenPosCfg.set(childRelId, {
                             sunblock: childCfg.sunblockPosition ?? 20,
                             heatblock: childCfg.heatblockPosition ?? 0,
+                            aktiviert: childCfg.aktiviert ?? true,
                         });
                     }
                 }

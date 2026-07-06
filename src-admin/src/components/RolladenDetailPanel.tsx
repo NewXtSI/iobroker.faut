@@ -24,6 +24,18 @@ export default function RolladenDetailPanel({ node, socket, theme, onConfigChang
 
     return (
         <Stack spacing={2} sx={{ mt: 2 }}>
+            {/* Aktiviert */}
+            <FormControlLabel
+                control={
+                    <Checkbox
+                        size="small"
+                        checked={cfg.aktiviert ?? true}
+                        onChange={e => onConfigChange('aktiviert', e.target.checked)}
+                    />
+                }
+                label={I18n.t('Control enabled')}
+            />
+
             {/* Position DP */}
             <DpField
                 label={I18n.t('DP Position')}

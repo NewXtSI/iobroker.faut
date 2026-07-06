@@ -68,8 +68,8 @@ class Faut extends utils.Adapter {
 	private readonly shutterPositionDpIds   = new Set<string>();
 	/** Maps Rolladen own relId → external position DP ID. */
 	private readonly rolladenRelIdToPosDp   = new Map<string, string>();
-	/** Maps Rolladen own relId → { sunblock%, heatblock% }. */
-	private readonly rolladenPosCfg         = new Map<string, { sunblock: number; heatblock: number }>();
+	/** Maps Rolladen own relId → { sunblock%, heatblock%, aktiviert }. */
+	private readonly rolladenPosCfg         = new Map<string, { sunblock: number; heatblock: number; aktiviert: boolean }>();
 	/** Daily reschedule timer for shutter sunrise/sunset events. */
 	private shutterDailyTimer: ReturnType<typeof setTimeout> | null = null;
 	/** Last seen values of foreign DPs – used to suppress duplicate extended-log entries. */
@@ -737,6 +737,12 @@ class Faut extends utils.Adapter {
 	 * Skips if the shutter is in manual mode.
 	 */
 	private async applyShutterState(rolladenRelId: string, newState: string, reason: string): Promise<void> {
+		// Check if this actuator is enabled
+		if (this.rolladenPosCfg.get(rolladenRelId)?.aktiviert === false) {
+			this.logShutter(`${rolladenRelId}: deaktiviert – ignoring [${reason}]`);
+			return;
+		}
+
 		// Respect manual mode
 		try {
 			const cur = await this.getStateAsync(`${rolladenRelId}.state`);
@@ -810,6 +816,7 @@ class Faut extends utils.Adapter {
 						this.rolladenPosCfg.set(childRelId, {
 							sunblock:  childCfg.sunblockPosition  ?? 20,
 							heatblock: childCfg.heatblockPosition ?? 0,
+							aktiviert: childCfg.aktiviert         ?? true,
 						});
 					}
 				}
