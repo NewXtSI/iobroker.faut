@@ -59,15 +59,15 @@ export const NODE_TYPE_DEFS: Record<FautNodeType, NodeTypeDef> = {
 
 /** Which types may be created as direct children of each parent type (or root) */
 export const ALLOWED_CHILDREN: Record<'root' | FautNodeType, FautNodeType[]> = {
-    root:           ['Garten', 'Gebäude', 'Heizung', 'Energie', 'Umwelt', 'Person'],
+    root:           ['Garten', 'Gebäude', 'Heizung', 'Energie', 'Umwelt', 'Person', 'Sonne'],
     Garten:         ['Sonne'],
     Gebäude:        ['Etage', 'Raum'],
     Heizung:        [],
     Energie:        [],
     Umwelt:         ['Temperatur', 'Helligkeit', 'Regen', 'Sonne'],
     Person:         [],
-    Etage:          ['Raum'],
-    Raum:           ['Temperatur', 'Helligkeit', 'Bewegung', 'Fenster/Tür', 'Thermostat', 'Rolladen', 'Ventilator', 'Lampe'],
+    Etage:          ['Raum', 'Sonne'],
+    Raum:           ['Temperatur', 'Helligkeit', 'Bewegung', 'Fenster/Tür', 'Thermostat', 'Rolladen', 'Ventilator', 'Lampe', 'Sonne'],
     Temperatur:     [],
     Helligkeit:     [],
     Regen:          [],
