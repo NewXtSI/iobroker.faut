@@ -72,6 +72,12 @@ class Faut extends utils.Adapter {
     shutterRooms = new Map();
     /** Position DPs of all configured Rolladen (for extended logging). */
     shutterPositionDpIds = new Set();
+    /** Maps Rolladen own relId → external position DP ID. */
+    rolladenRelIdToPosDp = new Map();
+    /** Maps Rolladen own relId → { sunblock%, heatblock% }. */
+    rolladenPosCfg = new Map();
+    /** Daily reschedule timer for shutter sunrise/sunset events. */
+    shutterDailyTimer = null;
     constructor(options = {}) {
         super({
             ...options,
@@ -517,16 +523,7 @@ class Faut extends utils.Adapter {
         this.collectSunNodes(tree, '');
         if (this.sunNodeRelIds.length === 0)
             return;
-        // Read geo position from ioBroker system config
-        try {
-            const sysCfg = await this.getForeignObjectAsync('system.config');
-            const common = (sysCfg?.common ?? {});
-            this.sunLat = typeof common.latitude === 'number' ? common.latitude : 0;
-            this.sunLng = typeof common.longitude === 'number' ? common.longitude : 0;
-        }
-        catch (e) {
-            this.log.warn(`Could not read system.config for geo position: ${e.message}`);
-        }
+        await this.ensureGeoPosition();
         if (this.sunLat === 0 && this.sunLng === 0) {
             this.log.warn('No geo position set in ioBroker system settings – sun calculation disabled.');
             return;
@@ -538,6 +535,20 @@ class Faut extends utils.Adapter {
                 this.log.error(`Sun update error: ${e.message}`);
             });
         }, 5 * 60_000);
+    }
+    /** Loads lat/lng from system.config once (no-op if already loaded). */
+    async ensureGeoPosition() {
+        if (this.sunLat !== 0 || this.sunLng !== 0)
+            return;
+        try {
+            const sysCfg = await this.getForeignObjectAsync('system.config');
+            const common = (sysCfg?.common ?? {});
+            this.sunLat = typeof common.latitude === 'number' ? common.latitude : 0;
+            this.sunLng = typeof common.longitude === 'number' ? common.longitude : 0;
+        }
+        catch (e) {
+            this.log.warn(`Could not read system.config for geo position: ${e.message}`);
+        }
     }
     /** Calculates and writes all sun states for the current moment. */
     async updateSunStates() {
@@ -573,7 +584,6 @@ class Faut extends utils.Adapter {
     }
     /**
      * Collects all rooms with shutter control configured and logs the found topology.
-     * Does NOT write to any position DP.
      */
     async setupShutterControl() {
         const tree = Array.isArray(this.config.grundstueck)
@@ -590,32 +600,172 @@ class Faut extends utils.Adapter {
                 `riseOffset=${room.aufgangOffset}min, setOffset=${room.untergangOffset}min, ` +
                 `glare=${room.blendschutz}, heat=${room.hitzeschutz}, ` +
                 `shutters=${room.rolladenRelIds.length}`);
-            for (const rel of room.rolladenRelIds) {
+            for (const rel of room.rolladenRelIds)
                 this.logShutter(`  Rolladen: ${rel}`);
+        }
+        // Log context sources
+        this.logShutter(this.sunNodeRelIds.length > 0
+            ? `Sun node(s): ${this.sunNodeRelIds.join(', ')}`
+            : 'No sun node found – sun-based control unavailable.');
+        const globalLuxDpId = this.findGlobalLuxDp(tree);
+        this.logShutter(globalLuxDpId ? `Global lux DP: ${globalLuxDpId}` : 'No global lux sensor.');
+        this.logShutter(this.nightModeDpId ? `Night mode DP: ${this.nightModeDpId}` : 'Night mode DP not configured.');
+        // Ensure geo position is loaded (may have been skipped if no Sonne node)
+        await this.ensureGeoPosition();
+        if (this.sunLat === 0 && this.sunLng === 0) {
+            this.logShutter('No geo position – time-based shutter control disabled.');
+            return;
+        }
+        // Schedule sunrise/sunset timers and apply initial state
+        for (const room of this.shutterRooms.values()) {
+            await this.scheduleShutterEvents(room);
+        }
+        this.scheduleShutterDailyReset();
+    }
+    /** Schedules sunrise/sunset timers for one room and applies the correct initial state. */
+    async scheduleShutterEvents(room) {
+        if (room.sunriseTimer !== null) {
+            clearTimeout(room.sunriseTimer);
+            room.sunriseTimer = null;
+        }
+        if (room.sunsetTimer !== null) {
+            clearTimeout(room.sunsetTimer);
+            room.sunsetTimer = null;
+        }
+        const now = new Date();
+        const times = SunCalc.getTimes(now, this.sunLat, this.sunLng);
+        const sunriseMs = times.sunrise.getTime() + room.aufgangOffset * 60_000;
+        const sunsetMs = times.sunset.getTime() + room.untergangOffset * 60_000;
+        const msToSunrise = sunriseMs - Date.now();
+        const msToSunset = sunsetMs - Date.now();
+        this.logShutter(`Room "${room.relId}": sunrise@${new Date(sunriseMs).toLocaleTimeString()}, ` +
+            `sunset@${new Date(sunsetMs).toLocaleTimeString()}`);
+        // ---- Apply initial state ----
+        const isNightMode = !!(await this.getStateAsync('global.nightMode'))?.val;
+        if (msToSunset <= 0) {
+            for (const rel of room.rolladenRelIds)
+                await this.applyShutterState(rel, 'closed', 'startup: past sunset');
+        }
+        else if (msToSunrise <= 0 && !isNightMode) {
+            for (const rel of room.rolladenRelIds)
+                await this.applyShutterState(rel, 'open', 'startup: daytime, no night mode');
+        }
+        else {
+            for (const rel of room.rolladenRelIds)
+                await this.applyShutterState(rel, 'closed', 'startup: before sunrise or night mode active');
+        }
+        // ---- Schedule future events ----
+        if (msToSunrise > 0) {
+            room.sunriseTimer = setTimeout(() => { room.sunriseTimer = null; this.triggerShutterSunrise(room); }, msToSunrise);
+            this.logShutter(`Room "${room.relId}": sunrise timer in ${Math.round(msToSunrise / 60_000)}min`);
+        }
+        if (msToSunset > 0) {
+            room.sunsetTimer = setTimeout(() => { room.sunsetTimer = null; this.triggerShutterSunset(room); }, msToSunset);
+            this.logShutter(`Room "${room.relId}": sunset timer in ${Math.round(msToSunset / 60_000)}min`);
+        }
+    }
+    /** Fires at sunrise (+ offset): opens shutters if night mode is off. */
+    triggerShutterSunrise(room) {
+        this.getStateAsync('global.nightMode').then(nm => {
+            if (nm?.val) {
+                this.logShutter(`Room "${room.relId}": sunrise – night mode active, staying closed`);
+                return;
+            }
+            this.logShutter(`Room "${room.relId}": sunrise → opening shutters`);
+            for (const rel of room.rolladenRelIds)
+                this.applyShutterState(rel, 'open', 'sunrise').catch(e => this.log.error(`Shutter sunrise error: ${e.message}`));
+        }).catch(e => this.log.error(`Night mode read error: ${e.message}`));
+    }
+    /** Fires at sunset (+ offset): closes all shutters. */
+    triggerShutterSunset(room) {
+        this.logShutter(`Room "${room.relId}": sunset → closing shutters`);
+        for (const rel of room.rolladenRelIds)
+            this.applyShutterState(rel, 'closed', 'sunset').catch(e => this.log.error(`Shutter sunset error: ${e.message}`));
+    }
+    /** Reacts to night mode changes: closes or opens shutters accordingly. */
+    async handleNightModeForShutters(isNight) {
+        if (this.shutterRooms.size === 0)
+            return;
+        if (isNight) {
+            for (const room of this.shutterRooms.values()) {
+                this.logShutter(`Room "${room.relId}": night mode ON → closing`);
+                for (const rel of room.rolladenRelIds)
+                    await this.applyShutterState(rel, 'closed', 'night mode activated');
+            }
+            return;
+        }
+        // Night mode turned OFF → open only if currently daytime
+        const now = new Date();
+        for (const room of this.shutterRooms.values()) {
+            if (this.sunLat === 0 && this.sunLng === 0) {
+                this.logShutter(`Room "${room.relId}": night mode OFF, no geo`);
+                continue;
+            }
+            const times = SunCalc.getTimes(now, this.sunLat, this.sunLng);
+            const rise = new Date(times.sunrise.getTime() + room.aufgangOffset * 60_000);
+            const set = new Date(times.sunset.getTime() + room.untergangOffset * 60_000);
+            if (now >= rise && now < set) {
+                this.logShutter(`Room "${room.relId}": night mode OFF, daytime → opening`);
+                for (const rel of room.rolladenRelIds)
+                    await this.applyShutterState(rel, 'open', 'night mode deactivated, daytime');
+            }
+            else {
+                this.logShutter(`Room "${room.relId}": night mode OFF, outside daytime → staying closed`);
             }
         }
-        // Log available sun nodes
-        if (this.sunNodeRelIds.length > 0) {
-            this.logShutter(`Sun node(s) found: ${this.sunNodeRelIds.join(', ')}`);
+    }
+    /**
+     * Sets the shutter’s internal state and (if steuerungAktiviert) writes the position.
+     * Skips if the shutter is in manual mode.
+     */
+    async applyShutterState(rolladenRelId, newState, reason) {
+        // Respect manual mode
+        try {
+            const cur = await this.getStateAsync(`${rolladenRelId}.state`);
+            if (cur?.val === 'manual') {
+                this.logShutter(`${rolladenRelId}: manual – ignoring [${reason}]`);
+                return;
+            }
+        }
+        catch { /* state object not yet created – proceed */ }
+        await this.setStateAsync(`${rolladenRelId}.state`, { val: newState, ack: true });
+        this.logShutter(`${rolladenRelId}: state → ${newState} [${reason}]`);
+        const pos = this.getShutterTargetPosition(rolladenRelId, newState);
+        if (pos === null)
+            return; // sunblock/heatblock handled later; manual = no-op
+        if (this.config.steuerungAktiviert) {
+            const dpId = this.rolladenRelIdToPosDp.get(rolladenRelId);
+            if (dpId) {
+                await this.setForeignStateAsync(dpId, { val: pos, ack: false });
+                this.logShutter(`${rolladenRelId}: wrote position=${pos} → ${dpId}`);
+            }
         }
         else {
-            this.logShutter('No sun node found in tree – sun-based control unavailable.');
+            this.logShutter(`${rolladenRelId}: steuerungAktiviert=false → would set position=${pos} [${reason}]`);
         }
-        // Log global lux sensor
-        const globalLuxDpId = this.findGlobalLuxDp(tree);
-        if (globalLuxDpId) {
-            this.logShutter(`Global lux sensor DP: ${globalLuxDpId}`);
+    }
+    /** Returns the target position (%) for a given shutter state. */
+    getShutterTargetPosition(relId, state) {
+        switch (state) {
+            case 'open': return 0;
+            case 'closed': return 100;
+            case 'sunblock': return this.rolladenPosCfg.get(relId)?.sunblock ?? 20;
+            case 'heatblock': return this.rolladenPosCfg.get(relId)?.heatblock ?? 0;
+            default: return null;
         }
-        else {
-            this.logShutter('No global lux sensor configured.');
-        }
-        // Log night mode
-        if (this.nightModeDpId) {
-            this.logShutter(`Night mode DP: ${this.nightModeDpId}`);
-        }
-        else {
-            this.logShutter('Night mode DP not configured.');
-        }
+    }
+    /** Schedules a daily timer to reschedule all shutter events at midnight + 1 min. */
+    scheduleShutterDailyReset() {
+        const now = new Date();
+        const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 1, 0);
+        const ms = midnight.getTime() - now.getTime();
+        this.shutterDailyTimer = setTimeout(() => {
+            this.shutterDailyTimer = null;
+            this.logShutter('Daily reschedule of shutter timers.');
+            Promise.all(Array.from(this.shutterRooms.values()).map(r => this.scheduleShutterEvents(r)))
+                .then(() => this.scheduleShutterDailyReset())
+                .catch(e => this.log.error(`Daily reschedule failed: ${e.message}`));
+        }, ms);
     }
     /** Walks the tree and populates shutterRooms for rooms with rolladensteuerung=true. */
     collectShutterRooms(nodes, prefix) {
@@ -630,8 +780,14 @@ class Faut extends utils.Adapter {
                         const childRelId = `${relId}.${child.id}`;
                         const childCfg = child.config ?? {};
                         rolladenRelIds.push(childRelId);
-                        if (childCfg.dpPosition)
+                        if (childCfg.dpPosition) {
                             rolladenPosDpIds.push(childCfg.dpPosition);
+                            this.rolladenRelIdToPosDp.set(childRelId, childCfg.dpPosition);
+                        }
+                        this.rolladenPosCfg.set(childRelId, {
+                            sunblock: childCfg.sunblockPosition ?? 20,
+                            heatblock: childCfg.heatblockPosition ?? 0,
+                        });
                     }
                 }
                 this.shutterRooms.set(relId, {
@@ -643,6 +799,8 @@ class Faut extends utils.Adapter {
                     hitzeschutz: cfg.hitzeschutz ?? false,
                     rolladenRelIds,
                     rolladenPosDpIds,
+                    sunriseTimer: null,
+                    sunsetTimer: null,
                 });
             }
             if (node.children?.length)
@@ -766,6 +924,9 @@ class Faut extends utils.Adapter {
             specs.push({ id: 'azimuth', name: 'Azimuth', dataType: 'number', role: 'value', unit: '°' });
         }
         else if (nodeType === 'Rolladen') {
+            specs.push({ id: 'state', name: 'State', dataType: 'string', role: 'text', def: 'open', write: true,
+                states: { open: 'Open', closed: 'Closed', sunblock: 'Sunblock', heatblock: 'Heatblock', manual: 'Manual' },
+            });
             if (cfg.dpPosition)
                 specs.push({ id: 'position', name: 'Position', dataType: 'number', role: 'level.blind', unit: '%', def: 0, write: true });
         }
@@ -798,15 +959,20 @@ class Faut extends utils.Adapter {
      */
     onUnload(callback) {
         try {
-            // Clear all running presence cooldown timers
             for (const timer of this.cooldownTimers.values())
                 clearTimeout(timer);
-            // Clear all running unreach timers
             for (const timer of this.unreachTimers.values())
                 clearTimeout(timer);
-            // Clear sun interval
             if (this.sunIntervalTimer !== null)
                 clearInterval(this.sunIntervalTimer);
+            if (this.shutterDailyTimer !== null)
+                clearTimeout(this.shutterDailyTimer);
+            for (const room of this.shutterRooms.values()) {
+                if (room.sunriseTimer !== null)
+                    clearTimeout(room.sunriseTimer);
+                if (room.sunsetTimer !== null)
+                    clearTimeout(room.sunsetTimer);
+            }
             callback();
         }
         catch (error) {
@@ -863,9 +1029,9 @@ class Faut extends utils.Adapter {
             });
             this.startUnreachTimer(unreachRelId, UNREACH_TIMEOUT_MS);
         }
-        // Extended shutter logging: log all relevant subscribed input changes
-        if (this.shutterPositionDpIds.has(id)) {
-            this.logShutterExtended(`Position DP changed: ${id} = ${state.val}`);
+        // Extended shutter logging: log ALL subscribed foreign state changes
+        if (!id.startsWith(`${this.namespace}.`)) {
+            this.logShutterExtended(`DP changed: ${id} = ${JSON.stringify(state.val)}`);
         }
         // Night mode: external DP changed → mirror to own state
         if (this.nightModeDpId && id === this.nightModeDpId) {
@@ -878,6 +1044,12 @@ class Faut extends utils.Adapter {
         if (id === `${this.namespace}.global.nightMode` && !state.ack && this.nightModeDpId) {
             this.setForeignStateAsync(this.nightModeDpId, { val: !!state.val, ack: false }).catch(e => {
                 this.log.error(`Night mode write-through failed: ${e.message}`);
+            });
+        }
+        // Night mode: react for shutter control on confirmed state (ack=true, or no ext DP)
+        if (id === `${this.namespace}.global.nightMode` && (state.ack || !this.nightModeDpId)) {
+            this.handleNightModeForShutters(!!state.val).catch(e => {
+                this.log.error(`Shutter night mode reaction failed: ${e.message}`);
             });
         }
     }
