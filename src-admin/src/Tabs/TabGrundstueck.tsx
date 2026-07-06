@@ -52,6 +52,8 @@ import {
 import SensorDetailPanel from '../components/SensorDetailPanel';
 import RaumDetailPanel from '../components/RaumDetailPanel';
 import RolladenDetailPanel from '../components/RolladenDetailPanel';
+import PersonDetailPanel from '../components/PersonDetailPanel';
+import AlexaSection from '../components/AlexaSection';
 
 // ---- icon map ----
 
@@ -364,6 +366,35 @@ export default function TabGrundstueck({ native, socket, theme, onChange }: TabG
                         {/* Rolladen config */}
                         {selectedNode.type === 'Rolladen' && (
                             <RolladenDetailPanel
+                                node={selectedNode}
+                                socket={socket}
+                                theme={theme}
+                                onConfigChange={(key, value) => {
+                                    const newTree = updateNodeConfig(tree, selectedNode.id, key, value);
+                                    setTree(newTree);
+                                    onChange('grundstueck', newTree);
+                                }}
+                            />
+                        )}
+
+                        {/* Person config */}
+                        {selectedNode.type === 'Person' && (
+                            <PersonDetailPanel
+                                node={selectedNode}
+                                socket={socket}
+                                onConfigChange={(key, value) => {
+                                    const newTree = updateNodeConfig(tree, selectedNode.id, key, value);
+                                    setTree(newTree);
+                                    onChange('grundstueck', newTree);
+                                }}
+                            />
+                        )}
+
+                        {/* Alexa device (Raum / Gebäude / Etage) */}
+                        {(selectedNode.type === 'Raum' ||
+                            selectedNode.type === 'Gebäude' ||
+                            selectedNode.type === 'Etage') && (
+                            <AlexaSection
                                 node={selectedNode}
                                 socket={socket}
                                 theme={theme}

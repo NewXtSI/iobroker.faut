@@ -116,6 +116,10 @@ export interface FautNodeConfig {
     rolladenUntergangOffset?: number;
     blendschutz?: boolean;
     hitzeschutz?: boolean;
+    // Person-specific
+    dpResident?: string;
+    // Alexa integration (Raum / Gebäude / Etage)
+    dpAlexa?: string;
 }
 
 // ---- Tree node ----
