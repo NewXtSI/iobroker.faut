@@ -764,8 +764,8 @@ class Faut extends utils.Adapter {
 	/** Returns the target position (%) for a given shutter state. */
 	private getShutterTargetPosition(relId: string, state: string): number | null {
 		switch (state) {
-			case 'open':     return 0;
-			case 'closed':   return 100;
+			case 'open':     return 100;
+			case 'closed':   return 0;
 			case 'sunblock':  return this.rolladenPosCfg.get(relId)?.sunblock  ?? 20;
 			case 'heatblock': return this.rolladenPosCfg.get(relId)?.heatblock ?? 0;
 			default:          return null;
