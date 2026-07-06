@@ -1,0 +1,78 @@
+import React, { useState } from 'react';
+import { Box, Button, Stack } from '@mui/material';
+import { DialogSelectID, I18n, type IobTheme } from '@iobroker/adapter-react-v5';
+import { type FautNodeConfig, type FautTreeNode } from '../types/treeTypes';
+import DpField from './DpField';
+
+interface Props {
+    node: FautTreeNode;
+    socket: any;
+    theme: IobTheme;
+    onConfigChange: (key: keyof FautNodeConfig, value: string | boolean | number) => void;
+}
+
+/**
+ * Detail panel for Alexa actor nodes.
+ * The user selects the device's root branch (channel/folder), NOT a leaf state.
+ * statesOnly={false} enables selection of channels, devices and folders.
+ * Test button writes to <device>.Command.Speak.
+ */
+export default function AlexaDetailPanel({ node, socket, theme, onConfigChange }: Props): React.JSX.Element {
+    const cfg = node.config ?? {};
+    const [selectOpen, setSelectOpen] = useState(false);
+    const [testing, setTesting] = useState(false);
+
+    const dpAlexa = (cfg.dpAlexa as string | undefined) ?? '';
+
+    const handleTest = (): void => {
+        if (!dpAlexa) return;
+        setTesting(true);
+        socket.setState(`${dpAlexa}.Command.Speak`, {
+            val: 'Das ist ein Test von ioBroker faut.',
+            ack: false,
+        });
+        setTimeout(() => setTesting(false), 1500);
+    };
+
+    return (
+        <Stack spacing={2} sx={{ mt: 2 }}>
+            {/* Device path selector */}
+            <DpField
+                label={I18n.t('Alexa device path')}
+                value={dpAlexa}
+                onChange={v => onConfigChange('dpAlexa', v)}
+                onSelect={() => setSelectOpen(true)}
+            />
+
+            {/* Test button */}
+            {dpAlexa && (
+                <Box>
+                    <Button
+                        variant="outlined"
+                        size="small"
+                        disabled={testing}
+                        onClick={handleTest}
+                    >
+                        {I18n.t('Test')} (Command.Speak)
+                    </Button>
+                </Box>
+            )}
+
+            {/* Object selector – statesOnly=false allows folder/channel selection */}
+            {selectOpen && (
+                <DialogSelectID
+                    socket={socket}
+                    theme={theme}
+                    title={I18n.t('Select Alexa device')}
+                    selected={dpAlexa}
+                    statesOnly={false}
+                    onClose={() => setSelectOpen(false)}
+                    onOk={id => {
+                        if (typeof id === 'string' && id) onConfigChange('dpAlexa', id);
+                        setSelectOpen(false);
+                    }}
+                />
+            )}
+        </Stack>
+    );
+}

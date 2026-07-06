@@ -35,6 +35,7 @@ import LightbulbIcon from '@mui/icons-material/Lightbulb';
 import MeetingRoomIcon from '@mui/icons-material/MeetingRoom';
 import ParkIcon from '@mui/icons-material/Park';
 import PersonIcon from '@mui/icons-material/Person';
+import SpeakerIcon from '@mui/icons-material/Speaker';
 import ThermostatIcon from '@mui/icons-material/Thermostat';
 import WaterDropIcon from '@mui/icons-material/WaterDrop';
 import WbSunnyIcon from '@mui/icons-material/WbSunny';
@@ -53,7 +54,7 @@ import SensorDetailPanel from '../components/SensorDetailPanel';
 import RaumDetailPanel from '../components/RaumDetailPanel';
 import RolladenDetailPanel from '../components/RolladenDetailPanel';
 import PersonDetailPanel from '../components/PersonDetailPanel';
-import AlexaSection from '../components/AlexaSection';
+import AlexaDetailPanel from '../components/AlexaDetailPanel';
 
 // ---- icon map ----
 
@@ -78,6 +79,7 @@ const TYPE_ICONS: Record<FautNodeType, SvgIconComponent> = {
     Rolladen:        BlindsIcon,
     Ventilator:      AirIcon,
     Lampe:           LightbulbIcon,
+    Alexa:           SpeakerIcon,
 };
 
 // ---- props ----
@@ -390,11 +392,9 @@ export default function TabGrundstueck({ native, socket, theme, onChange }: TabG
                             />
                         )}
 
-                        {/* Alexa device (Raum / Gebäude / Etage) */}
-                        {(selectedNode.type === 'Raum' ||
-                            selectedNode.type === 'Gebäude' ||
-                            selectedNode.type === 'Etage') && (
-                            <AlexaSection
+                        {/* Alexa actor config */}
+                        {selectedNode.type === 'Alexa' && (
+                            <AlexaDetailPanel
                                 node={selectedNode}
                                 socket={socket}
                                 theme={theme}

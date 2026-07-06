@@ -21,7 +21,8 @@ export type FautNodeType =
     | 'Thermostat'
     | 'Rolladen'
     | 'Ventilator'
-    | 'Lampe';
+    | 'Lampe'
+    | 'Alexa';
 
 export interface FautNodeConfig {
     // Temperatur-specific
@@ -59,7 +60,7 @@ export interface FautNodeConfig {
     hitzeschutz?: boolean;
     // Person-specific
     dpResident?: string;
-    // Alexa integration (Raum / Gebäude / Etage)
+    // Alexa node-specific
     dpAlexa?: string;
 }
 

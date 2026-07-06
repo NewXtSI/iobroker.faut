@@ -31,37 +31,45 @@ export default function PersonDetailPanel({ node, socket, onConfigChange }: Prop
 
     useEffect(() => {
         setLoading(true);
-        (socket.getObjectView('system', 'channel', {
-            startkey: 'residents.0.roomies.',
-            endkey: 'residents.0.roomies.\u9999',
-        }) as Promise<unknown>)
-            .then((result: unknown) => {
-                const found: Roomie[] = [];
-                // Handle both { rows: [{id, value}] } and Record<string, ioBroker.Object>
-                const entries: Array<[string, unknown]> =
-                    result && typeof result === 'object' && Array.isArray((result as any).rows)
-                        ? (result as any).rows.map((r: any) => [r.id as string, r.value])
-                        : Object.entries((result as Record<string, unknown>) ?? {});
 
-                for (const [id, obj] of entries) {
-                    const parts = id.split('.');
-                    // residents.0.roomies.<name> = 4 parts
-                    if (parts.length === 4) {
-                        const name = (obj as any)?.common?.name;
-                        found.push({
-                            id,
-                            label: typeof name === 'string' ? name : parts[3],
-                        });
-                    }
+        /** Normalise a getObjectView result into [id, obj] pairs */
+        const toEntries = (result: unknown): Array<[string, unknown]> => {
+            if (!result) return [];
+            if (typeof result === 'object' && Array.isArray((result as any).rows)) {
+                return (result as any).rows.map((r: any) => [r.id as string, r.value]);
+            }
+            return Object.entries(result as Record<string, unknown>);
+        };
+
+        const opts = { startkey: 'residents.0.roomies.', endkey: 'residents.0.roomies.\u9999' };
+
+        // Residents adapter may use 'folder', 'channel', or 'device' – try all three
+        Promise.all([
+            (socket.getObjectView('system', 'folder',  opts) as Promise<unknown>).catch(() => null),
+            (socket.getObjectView('system', 'channel', opts) as Promise<unknown>).catch(() => null),
+            (socket.getObjectView('system', 'device',  opts) as Promise<unknown>).catch(() => null),
+        ]).then(([r1, r2, r3]) => {
+            const seen = new Set<string>();
+            const found: Roomie[] = [];
+
+            for (const [id, obj] of [...toEntries(r1), ...toEntries(r2), ...toEntries(r3)]) {
+                if (seen.has(id)) continue;
+                seen.add(id);
+                const parts = id.split('.');
+                // residents.0.roomies.<name> = 4 parts
+                if (parts.length === 4) {
+                    const name = (obj as any)?.common?.name;
+                    found.push({ id, label: typeof name === 'string' ? name : parts[3] });
                 }
-                setRoomies(found);
-                setNoAdapter(found.length === 0);
-                setLoading(false);
-            })
-            .catch(() => {
-                setNoAdapter(true);
-                setLoading(false);
-            });
+            }
+
+            setRoomies(found);
+            setNoAdapter(found.length === 0);
+            setLoading(false);
+        }).catch(() => {
+            setNoAdapter(true);
+            setLoading(false);
+        });
     }, [socket]);
 
     return (

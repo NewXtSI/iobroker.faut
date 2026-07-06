@@ -22,7 +22,8 @@ export type FautNodeType =
     | 'Thermostat'
     | 'Rolladen'
     | 'Ventilator'
-    | 'Lampe';
+    | 'Lampe'
+    | 'Alexa';
 
 export type NodeKind = 'location' | 'sensor' | 'actor';
 
@@ -55,6 +56,7 @@ export const NODE_TYPE_DEFS: Record<FautNodeType, NodeTypeDef> = {
     Rolladen:        { label: 'Rolladen (Aktor)',    kind: 'actor' },
     Ventilator:      { label: 'Ventilator (Aktor)',  kind: 'actor' },
     Lampe:           { label: 'Lampe (Aktor)',       kind: 'actor' },
+    Alexa:           { label: 'Alexa (Aktor)',       kind: 'actor' },
 };
 
 /** Which types may be created as direct children of each parent type (or root) */
@@ -66,8 +68,8 @@ export const ALLOWED_CHILDREN: Record<'root' | FautNodeType, FautNodeType[]> = {
     Energie:        [],
     Umwelt:         ['Temperatur', 'Helligkeit', 'Regen', 'Sonne'],
     Person:         [],
-    Etage:          ['Raum', 'Sonne'],
-    Raum:           ['Temperatur', 'Helligkeit', 'Bewegung', 'Fenster/Tür', 'Thermostat', 'Rolladen', 'Ventilator', 'Lampe', 'Sonne'],
+    Etage:          ['Raum', 'Sonne', 'Alexa'],
+    Raum:           ['Temperatur', 'Helligkeit', 'Bewegung', 'Fenster/Tür', 'Thermostat', 'Rolladen', 'Ventilator', 'Lampe', 'Sonne', 'Alexa'],
     Temperatur:     [],
     Helligkeit:     [],
     Regen:          [],
@@ -78,6 +80,7 @@ export const ALLOWED_CHILDREN: Record<'root' | FautNodeType, FautNodeType[]> = {
     Rolladen:       [],
     Ventilator:     [],
     Lampe:          [],
+    Alexa:          [],
 };
 
 // ---- Node config ----
@@ -118,7 +121,7 @@ export interface FautNodeConfig {
     hitzeschutz?: boolean;
     // Person-specific
     dpResident?: string;
-    // Alexa integration (Raum / Gebäude / Etage)
+    // Alexa node-specific
     dpAlexa?: string;
 }
 
