@@ -1069,8 +1069,9 @@ class Faut extends utils.Adapter {
 			this.startUnreachTimer(unreachRelId, UNREACH_TIMEOUT_MS);
 		}
 
-		// Extended shutter logging: log foreign state changes (only when value differs)
-		if (!id.startsWith(`${this.namespace}.`)) {
+		// Extended shutter logging: only DPs relevant to shutter control (position + night mode)
+		const isShutterRelevantDp = this.shutterPositionDpIds.has(id) || (!!this.nightModeDpId && id === this.nightModeDpId);
+		if (isShutterRelevantDp) {
 			const last = this.dpLastExtValues.get(id);
 			if (last !== state.val) {
 				this.dpLastExtValues.set(id, state.val);
