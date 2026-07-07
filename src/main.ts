@@ -82,6 +82,7 @@ class Faut extends utils.Adapter {
 		});
 		this.on('ready', this.onReady.bind(this));
 		this.on('stateChange', this.onStateChange.bind(this));
+		this.on('message', this.onMessage.bind(this));
 		this.on('unload', this.onUnload.bind(this));
 	}
 
@@ -583,6 +584,23 @@ class Faut extends utils.Adapter {
 	private logShutterExtended(msg: string): void {
 		if (this.config.logShuttercontrolExtended) {
 			this.log.debug(`[shuttercontrol_extended] ${msg}`);
+		}
+	}
+
+	private onMessage(obj: ioBroker.Message): void {
+		if (obj.command === 'log' && obj.message) {
+			const { flag, text } = obj.message as { flag: string; text: string };
+			switch (flag) {
+				case 'admin':            this.logAdmin(text); break;
+				case 'alexa':            this.logAlexa(text); break;
+				case 'presence':         this.logPresence(text); break;
+				case 'climate':          this.logClimate(text); break;
+				case 'climate_extended': this.logClimateExtended(text); break;
+				case 'light':            this.logLight(text); break;
+				case 'light_extended':   this.logLightExtended(text); break;
+				case 'energy':           this.logEnergy(text); break;
+				case 'energy_extended':  this.logEnergyExtended(text); break;
+			}
 		}
 	}
 

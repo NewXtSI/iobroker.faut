@@ -179,7 +179,7 @@ function clearGlobalSensor(nodes: FautTreeNode[], exceptId: string): FautTreeNod
 
 // ---- component ----
 
-export default function TabGrundstueck({ native, socket, theme, onChange }: TabGrundstueckProps): React.JSX.Element {
+export default function TabGrundstueck({ native, socket, theme, onChange, instance, adapterName }: TabGrundstueckProps): React.JSX.Element {
     const [tree, setTree] = useState<FautTreeNode[]>(() =>
         (native.grundstueck as FautTreeNode[] | undefined) ?? [],
     );
@@ -384,6 +384,8 @@ export default function TabGrundstueck({ native, socket, theme, onChange }: TabG
                             <PersonDetailPanel
                                 node={selectedNode}
                                 socket={socket}
+                                adapterName={adapterName}
+                                instance={instance}
                                 onConfigChange={(key, value) => {
                                     const newTree = updateNodeConfig(tree, selectedNode.id, key, value);
                                     setTree(newTree);
@@ -398,6 +400,8 @@ export default function TabGrundstueck({ native, socket, theme, onChange }: TabG
                                 node={selectedNode}
                                 socket={socket}
                                 theme={theme}
+                                adapterName={adapterName}
+                                instance={instance}
                                 onConfigChange={(key, value) => {
                                     const newTree = updateNodeConfig(tree, selectedNode.id, key, value);
                                     setTree(newTree);

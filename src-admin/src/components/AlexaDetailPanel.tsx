@@ -3,11 +3,14 @@ import { Box, Button, Stack } from '@mui/material';
 import { DialogSelectID, I18n, type IobTheme } from '@iobroker/adapter-react-v5';
 import { type FautNodeConfig, type FautTreeNode } from '../types/treeTypes';
 import DpField from './DpField';
+import { iobLog } from '../utils/iobLog';
 
 interface Props {
     node: FautTreeNode;
     socket: any;
     theme: IobTheme;
+    adapterName: string;
+    instance: number;
     onConfigChange: (key: keyof FautNodeConfig, value: string | boolean | number) => void;
 }
 
@@ -17,7 +20,7 @@ interface Props {
  * statesOnly={false} enables selection of channels, devices and folders.
  * Test button writes to <device>.Command.Speak.
  */
-export default function AlexaDetailPanel({ node, socket, theme, onConfigChange }: Props): React.JSX.Element {
+export default function AlexaDetailPanel({ node, socket, theme, adapterName, instance, onConfigChange }: Props): React.JSX.Element {
     const cfg = node.config ?? {};
     const [selectOpen, setSelectOpen] = useState(false);
     const [testing, setTesting] = useState(false);
@@ -28,9 +31,9 @@ export default function AlexaDetailPanel({ node, socket, theme, onConfigChange }
         if (!dpAlexa) return;
         setTesting(true);
         const speakId = `${dpAlexa}.Commands.speak`;
+        iobLog(socket, adapterName, instance, 'alexa', `test speak on '${speakId}'`);
         (socket.setState(speakId, 'Das ist ein Test von ioBroker faut.') as Promise<void> | undefined)
-            ?.catch((e: unknown) => console.error('[alexa] setState failed:', e));
-        console.log('[alexa] speak sent to', speakId);
+            ?.catch((e: unknown) => iobLog(socket, adapterName, instance, 'alexa', `setState failed: ${String(e)}`));
         setTimeout(() => setTesting(false), 1500);
     };
 

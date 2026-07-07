@@ -11,10 +11,13 @@ import {
 } from '@mui/material';
 import { I18n } from '@iobroker/adapter-react-v5';
 import { type FautNodeConfig, type FautTreeNode } from '../types/treeTypes';
+import { iobLog } from '../utils/iobLog';
 
 interface Props {
     node: FautTreeNode;
     socket: any;
+    adapterName: string;
+    instance: number;
     onConfigChange: (key: keyof FautNodeConfig, value: string | boolean | number) => void;
 }
 
@@ -23,7 +26,7 @@ interface Roomie {
     label: string;
 }
 
-export default function PersonDetailPanel({ node, socket, onConfigChange }: Props): React.JSX.Element {
+export default function PersonDetailPanel({ node, socket, adapterName, instance, onConfigChange }: Props): React.JSX.Element {
     const cfg = node.config ?? {};
     const [roomies, setRoomies] = useState<Roomie[]>([]);
     const [loading, setLoading] = useState(true);
@@ -31,6 +34,7 @@ export default function PersonDetailPanel({ node, socket, onConfigChange }: Prop
 
     useEffect(() => {
         setLoading(true);
+        iobLog(socket, adapterName, instance, 'admin', `residents search started for node '${node.label}'`);
 
         const start = 'residents.0.roomie.';
         const end   = `residents.0.roomie.\u9999`;
@@ -50,8 +54,6 @@ export default function PersonDetailPanel({ node, socket, onConfigChange }: Prop
                 ...Object.entries(r2 ?? {}),
                 ...Object.entries(r3 ?? {}),
             ];
-            console.log('[admin] residents search results:', allEntries.length, 'entries found');
-
             for (const [id] of allEntries) {
                 if (seen.has(id)) continue;
                 seen.add(id);
@@ -62,16 +64,20 @@ export default function PersonDetailPanel({ node, socket, onConfigChange }: Prop
                 }
             }
 
-            console.log('[admin] residents found:', found);
+            if (found.length > 0) {
+                iobLog(socket, adapterName, instance, 'admin', `residents found: ${found.map(r => r.label).join(', ')}`);
+            } else {
+                iobLog(socket, adapterName, instance, 'admin', 'no residents found – residents adapter installed?');
+            }
             setRoomies(found);
             setNoAdapter(found.length === 0);
             setLoading(false);
         }).catch((e: unknown) => {
-            console.error('[admin] residents search failed:', e);
+            iobLog(socket, adapterName, instance, 'admin', `residents search failed: ${String(e)}`);
             setNoAdapter(true);
             setLoading(false);
         });
-    }, [socket]);
+    }, [socket, adapterName, instance, node.label]);
 
     return (
         <Stack spacing={2} sx={{ mt: 2 }}>
