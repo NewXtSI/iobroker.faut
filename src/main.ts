@@ -91,6 +91,12 @@ class Faut extends utils.Adapter {
 	private heizungRelId: string | null = null;
 	/** Climate control: full own-state IDs of presence states in climate rooms. */
 	private readonly climatePresenceIds = new Set<string>();
+	/** Energy management: full foreign DP ID of Stromzähler current consumption. */
+	private energieVerbrauchDpId: string | null = null;
+	/** Energy management: maps foreign Wechselrichter power DP ID → node relId (for labelling). */
+	private readonly wechselrichterPowerDps = new Map<string, string>();
+	/** Energy management: last seen power value per foreign DP (W). */
+	private readonly energiePowerCache = new Map<string, number>();
 
 	public constructor(options: Partial<utils.AdapterOptions> = {}) {
 		super({
@@ -164,6 +170,7 @@ class Faut extends utils.Adapter {
 		await this.setupSunNodes();
 		await this.setupShutterControl();
 		await this.setupClimateControl();
+		await this.setupEnergyControl();
 	}
 
 	// ---- sensor subscriptions ----
@@ -196,6 +203,21 @@ class Faut extends utils.Adapter {
 
 		// Subscribe to own state so write-through can be triggered
 		this.subscribeStates('global.nightMode');
+
+		// Create hausverbrauch state
+		await this.extendObjectAsync('global.hausverbrauch', {
+			type: 'state',
+			common: {
+				name:  'Hausverbrauch',
+				type:  'number',
+				role:  'value.power',
+				unit:  'W',
+				read:  true,
+				write: false,
+				def:   0,
+			},
+			native: {},
+		});
 
 		const dpId = (this.config.dpNachtmodus as string | undefined) ?? '';
 		this.nightModeDpId = dpId;
@@ -762,6 +784,85 @@ class Faut extends utils.Adapter {
 			}
 		}
 		return null;
+	}
+
+	// ---- energy management ----
+
+	/** Walks the tree and fills energieVerbrauchDpId + wechselrichterPowerDps. */
+	private collectEnergyData(nodes: FautTreeNode[], prefix: string): void {
+		for (const node of nodes) {
+			const relId = prefix ? `${prefix}.${node.id}` : node.id;
+			const cfg   = (node.config as FautNodeConfig | undefined) ?? {};
+
+			if (node.type === 'Energie' && cfg.dpStromzaehlerVerbrauch && this.energieVerbrauchDpId === null) {
+				this.energieVerbrauchDpId = cfg.dpStromzaehlerVerbrauch;
+			}
+			if (node.type === 'Wechselrichter' && cfg.dpWechselrichterPower) {
+				this.wechselrichterPowerDps.set(cfg.dpWechselrichterPower, relId);
+			}
+
+			if (node.children?.length) this.collectEnergyData(node.children, relId);
+		}
+	}
+
+	/** Initialises energy management: subscribes to power DPs and writes initial Hausverbrauch. */
+	private async setupEnergyControl(): Promise<void> {
+		const tree: FautTreeNode[] = Array.isArray(this.config.grundstueck)
+			? (this.config.grundstueck as FautTreeNode[])
+			: [];
+		this.collectEnergyData(tree, '');
+
+		if (!this.energieVerbrauchDpId && this.wechselrichterPowerDps.size === 0) return;
+
+		this.logEnergy(
+			`Energy management: ${this.wechselrichterPowerDps.size} inverter(s)` +
+			(this.energieVerbrauchDpId ? ', grid meter configured' : ', no grid meter'),
+		);
+
+		// Grid meter: subscribe + read initial
+		if (this.energieVerbrauchDpId) {
+			this.subscribeForeignStates(this.energieVerbrauchDpId);
+			try {
+				const st = await this.getForeignStateAsync(this.energieVerbrauchDpId);
+				if (st?.val !== null && st?.val !== undefined) {
+					this.energiePowerCache.set(this.energieVerbrauchDpId, Number(st.val) || 0);
+				}
+			} catch (e) {
+				this.log.warn(`Energy: initial read of Netzbezug failed: ${(e as Error).message}`);
+			}
+		}
+
+		// Inverters: subscribe + read initial
+		for (const [dpId, relId] of this.wechselrichterPowerDps) {
+			this.subscribeForeignStates(dpId);
+			try {
+				const st = await this.getForeignStateAsync(dpId);
+				if (st?.val !== null && st?.val !== undefined) {
+					this.energiePowerCache.set(dpId, Number(st.val) || 0);
+				}
+			} catch (e) {
+				this.log.warn(`Energy: initial read of inverter (${this.labelFor(relId)}) failed: ${(e as Error).message}`);
+			}
+		}
+
+		await this.recalcHausverbrauch();
+	}
+
+	/** Sums all cached power values and writes global.hausverbrauch, then logs. */
+	private async recalcHausverbrauch(): Promise<void> {
+		const netzbezug = this.energieVerbrauchDpId
+			? (this.energiePowerCache.get(this.energieVerbrauchDpId) ?? 0)
+			: 0;
+		let solareinspeisung = 0;
+		for (const dpId of this.wechselrichterPowerDps.keys()) {
+			solareinspeisung += this.energiePowerCache.get(dpId) ?? 0;
+		}
+		const hausverbrauch = netzbezug + solareinspeisung;
+
+		this.logEnergyExtended(
+			`Hausverbrauch: ${hausverbrauch} W (Netzbezug: ${netzbezug} W, Solareinspeisung: ${solareinspeisung} W)`,
+		);
+		await this.setStateAsync('global.hausverbrauch', { val: hausverbrauch, ack: true });
 	}
 
 	// ---- shutter control ----
@@ -1378,9 +1479,16 @@ class Faut extends utils.Adapter {
 			}
 		}
 
+		// Energy: Wechselrichter power or Netzbezug changed → recalc Hausverbrauch
+		if (this.energieVerbrauchDpId === id || this.wechselrichterPowerDps.has(id)) {
+			this.energiePowerCache.set(id, Number(state.val) || 0);
+			this.recalcHausverbrauch().catch(e => {
+				this.log.error(`Hausverbrauch recalc failed: ${(e as Error).message}`);
+			});
+		}
+
 		// Climate: Heizung state write-through (ack=false) and setpoint update (ack=true)
-		if (this.heizungRelId) {
-			const hpId = `${this.namespace}.${this.heizungRelId}.heizperiode`;
+		if (this.heizungRelId) {			const hpId = `${this.namespace}.${this.heizungRelId}.heizperiode`;
 			const esId = `${this.namespace}.${this.heizungRelId}.energiesparmodus`;
 			if (id === hpId || id === esId) {
 				if (!state.ack) {
