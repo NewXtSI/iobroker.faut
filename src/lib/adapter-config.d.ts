@@ -15,6 +15,24 @@ declare global {
 			logShuttercontrol: boolean;
 			/** Log-Flag: Rolladensteuerung erweitert */
 			logShuttercontrolExtended: boolean;
+			/** Log-Flag: Admin-Initialisierung & Datenpunkt-Suche */
+			logAdmin: boolean;
+			/** Log-Flag: Alexa Sprachausgaben */
+			logAlexa: boolean;
+			/** Log-Flag: Anwesenheitserkennung */
+			logPresence: boolean;
+			/** Log-Flag: Klimasteuerung */
+			logClimate: boolean;
+			/** Log-Flag: Klimasteuerung erweitert */
+			logClimateExtended: boolean;
+			/** Log-Flag: Lichtsteuerung */
+			logLight: boolean;
+			/** Log-Flag: Lichtsteuerung erweitert */
+			logLightExtended: boolean;
+			/** Log-Flag: Energieverbrauch */
+			logEnergy: boolean;
+			/** Log-Flag: Energieverbrauch erweitert */
+			logEnergyExtended: boolean;
 		}
 	}
 }

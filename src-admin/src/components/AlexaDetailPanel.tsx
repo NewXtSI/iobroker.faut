@@ -27,10 +27,10 @@ export default function AlexaDetailPanel({ node, socket, theme, onConfigChange }
     const handleTest = (): void => {
         if (!dpAlexa) return;
         setTesting(true);
-        socket.setState(`${dpAlexa}.Commands.speak`, {
-            val: 'Das ist ein Test von ioBroker faut.',
-            ack: false,
-        });
+        const speakId = `${dpAlexa}.Commands.speak`;
+        (socket.setState(speakId, 'Das ist ein Test von ioBroker faut.') as Promise<void> | undefined)
+            ?.catch((e: unknown) => console.error('[alexa] setState failed:', e));
+        console.log('[alexa] speak sent to', speakId);
         setTimeout(() => setTesting(false), 1500);
     };
 

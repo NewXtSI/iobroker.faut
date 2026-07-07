@@ -586,6 +586,34 @@ class Faut extends utils.Adapter {
 		}
 	}
 
+	private logAdmin(msg: string): void {
+		if (this.config.logAdmin) this.log.debug(`[admin] ${msg}`);
+	}
+	private logAlexa(msg: string): void {
+		if (this.config.logAlexa) this.log.debug(`[alexa] ${msg}`);
+	}
+	private logPresence(msg: string): void {
+		if (this.config.logPresence) this.log.debug(`[presence] ${msg}`);
+	}
+	private logClimate(msg: string): void {
+		if (this.config.logClimate) this.log.debug(`[climate] ${msg}`);
+	}
+	private logClimateExtended(msg: string): void {
+		if (this.config.logClimateExtended) this.log.debug(`[climate_extended] ${msg}`);
+	}
+	private logLight(msg: string): void {
+		if (this.config.logLight) this.log.debug(`[light] ${msg}`);
+	}
+	private logLightExtended(msg: string): void {
+		if (this.config.logLightExtended) this.log.debug(`[light_extended] ${msg}`);
+	}
+	private logEnergy(msg: string): void {
+		if (this.config.logEnergy) this.log.debug(`[energy] ${msg}`);
+	}
+	private logEnergyExtended(msg: string): void {
+		if (this.config.logEnergyExtended) this.log.debug(`[energy_extended] ${msg}`);
+	}
+
 	/**
 	 * Collects all rooms with shutter control configured and logs the found topology.
 	 */

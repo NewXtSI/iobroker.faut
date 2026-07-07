@@ -32,41 +32,42 @@ export default function PersonDetailPanel({ node, socket, onConfigChange }: Prop
     useEffect(() => {
         setLoading(true);
 
-        /** Normalise a getObjectView result into [id, obj] pairs */
-        const toEntries = (result: unknown): Array<[string, unknown]> => {
-            if (!result) return [];
-            if (typeof result === 'object' && Array.isArray((result as any).rows)) {
-                return (result as any).rows.map((r: any) => [r.id as string, r.value]);
-            }
-            return Object.entries(result as Record<string, unknown>);
-        };
+        const start = 'residents.0.roomie.';
+        const end   = `residents.0.roomie.\u9999`;
 
-        const opts = { startkey: 'residents.0.roomies.', endkey: 'residents.0.roomies.\u9999' };
-
-        // Residents adapter may use 'folder', 'channel', or 'device' – try all three
+        // Use getObjectViewSystem (correct admin socket API: type, start, end)
+        // Residents adapter may create roomies as folder, channel, or device
         Promise.all([
-            (socket.getObjectView('system', 'folder',  opts) as Promise<unknown>).catch(() => null),
-            (socket.getObjectView('system', 'channel', opts) as Promise<unknown>).catch(() => null),
-            (socket.getObjectView('system', 'device',  opts) as Promise<unknown>).catch(() => null),
+            (socket.getObjectViewSystem('folder',  start, end) as Promise<Record<string, any>>).catch(() => null),
+            (socket.getObjectViewSystem('channel', start, end) as Promise<Record<string, any>>).catch(() => null),
+            (socket.getObjectViewSystem('device',  start, end) as Promise<Record<string, any>>).catch(() => null),
         ]).then(([r1, r2, r3]) => {
             const seen = new Set<string>();
             const found: Roomie[] = [];
 
-            for (const [id, obj] of [...toEntries(r1), ...toEntries(r2), ...toEntries(r3)]) {
+            const allEntries = [
+                ...Object.entries(r1 ?? {}),
+                ...Object.entries(r2 ?? {}),
+                ...Object.entries(r3 ?? {}),
+            ];
+            console.log('[admin] residents search results:', allEntries.length, 'entries found');
+
+            for (const [id] of allEntries) {
                 if (seen.has(id)) continue;
                 seen.add(id);
                 const parts = id.split('.');
-                // residents.0.roomies.<name> = 4 parts
+                // residents.0.roomie.<name> = 4 parts
                 if (parts.length === 4) {
-                    const name = (obj as any)?.common?.name;
-                    found.push({ id, label: typeof name === 'string' ? name : parts[3] });
+                    found.push({ id, label: parts[3] });
                 }
             }
 
+            console.log('[admin] residents found:', found);
             setRoomies(found);
             setNoAdapter(found.length === 0);
             setLoading(false);
-        }).catch(() => {
+        }).catch((e: unknown) => {
+            console.error('[admin] residents search failed:', e);
             setNoAdapter(true);
             setLoading(false);
         });
