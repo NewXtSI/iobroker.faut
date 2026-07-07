@@ -458,10 +458,10 @@ class Faut extends utils.Adapter {
 			}
 			// If in "cooldown" from a previous run but no timer is running → reset to absent
 			if (anyActive) {
-				this.logPresence(`${room.relId}: startup \u2192 present (sensor active)`);
+				this.logPresence(`${this.labelFor(room.relId)}: startup \u2192 present (sensor active)`);
 				await this.setStateAsync(`${room.relId}.presence`, { val: 'present', ack: true });
 			} else {
-				this.logPresence(`${room.relId}: startup \u2192 absent`);
+				this.logPresence(`${this.labelFor(room.relId)}: startup \u2192 absent`);
 				await this.setStateAsync(`${room.relId}.presence`, { val: 'absent',  ack: true });
 			}
 		}
