@@ -55,6 +55,7 @@ import RaumDetailPanel from '../components/RaumDetailPanel';
 import RolladenDetailPanel from '../components/RolladenDetailPanel';
 import PersonDetailPanel from '../components/PersonDetailPanel';
 import AlexaDetailPanel from '../components/AlexaDetailPanel';
+import HeizungDetailPanel from '../components/HeizungDetailPanel';
 
 // ---- icon map ----
 
@@ -371,6 +372,18 @@ export default function TabGrundstueck({ native, socket, theme, onChange, instan
                                 node={selectedNode}
                                 socket={socket}
                                 theme={theme}
+                                onConfigChange={(key, value) => {
+                                    const newTree = updateNodeConfig(tree, selectedNode.id, key, value);
+                                    setTree(newTree);
+                                    onChange('grundstueck', newTree);
+                                }}
+                            />
+                        )}
+
+                        {/* Heizung config */}
+                        {selectedNode.type === 'Heizung' && (
+                            <HeizungDetailPanel
+                                node={selectedNode}
                                 onConfigChange={(key, value) => {
                                     const newTree = updateNodeConfig(tree, selectedNode.id, key, value);
                                     setTree(newTree);

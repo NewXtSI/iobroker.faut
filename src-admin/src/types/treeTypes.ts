@@ -123,6 +123,14 @@ export interface FautNodeConfig {
     dpResident?: string;
     // Alexa node-specific
     dpAlexa?: string;
+    // Raum climate control
+    klimasteuerung?: boolean;
+    solltemperatur?: number;
+    absenkungNacht?: number;
+    absenkungAbwesend?: number;
+    // Heizung node
+    heizperiodeAktiv?: boolean;
+    energiesparmodusAktiv?: boolean;
 }
 
 // ---- Tree node ----

@@ -146,6 +146,56 @@ export default function RaumDetailPanel({ node, onConfigChange }: Props): React.
                     </Stack>
                 )}
             </Box>
+
+            <Divider />
+
+            {/* Climate control */}
+            <Box>
+                <FormControlLabel
+                    control={
+                        <Checkbox
+                            size="small"
+                            checked={cfg.klimasteuerung ?? false}
+                            onChange={e => onConfigChange('klimasteuerung', e.target.checked)}
+                        />
+                    }
+                    label={I18n.t('Climate control')}
+                />
+                {cfg.klimasteuerung && (
+                    <Stack spacing={1.5} sx={{ mt: 1, ml: 4 }}>
+                        <Typography variant="caption" color="text.secondary">
+                            {I18n.t('Climate control settings')}
+                        </Typography>
+                        <TextField
+                            label={I18n.t('Target temperature (°C)')}
+                            type="number"
+                            size="small"
+                            value={cfg.solltemperatur ?? 20}
+                            onChange={e => onConfigChange('solltemperatur', Number(e.target.value))}
+                            inputProps={{ min: 5, max: 30, step: 0.5 }}
+                            sx={{ width: 220 }}
+                        />
+                        <TextField
+                            label={I18n.t('Night setback (°C)')}
+                            type="number"
+                            size="small"
+                            value={cfg.absenkungNacht ?? 4}
+                            onChange={e => onConfigChange('absenkungNacht', Math.max(0, Number(e.target.value)))}
+                            inputProps={{ min: 0, max: 10, step: 0.5 }}
+                            sx={{ width: 220 }}
+                        />
+                        <TextField
+                            label={I18n.t('Absent setback (°C)')}
+                            type="number"
+                            size="small"
+                            value={cfg.absenkungAbwesend ?? 3}
+                            onChange={e => onConfigChange('absenkungAbwesend', Math.max(0, Number(e.target.value)))}
+                            inputProps={{ min: 0, max: 10, step: 0.5 }}
+                            sx={{ width: 220 }}
+                        />
+                    </Stack>
+                )}
+            </Box>
         </Stack>
     );
 }

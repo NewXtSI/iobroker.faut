@@ -82,6 +82,12 @@ class Faut extends utils.Adapter {
     dpLastExtValues = new Map();
     /** Maps each node relId to a human-readable label path (e.g. "Gebäude.EG.Arbeitszimmer"). */
     relIdToLabel = new Map();
+    /** Climate control: rooms with klimasteuerung=true. */
+    climateRooms = new Map();
+    /** Climate control: relId of the first Heizung node found. */
+    heizungRelId = null;
+    /** Climate control: full own-state IDs of presence states in climate rooms. */
+    climatePresenceIds = new Set();
     constructor(options = {}) {
         super({
             ...options,
@@ -147,6 +153,7 @@ class Faut extends utils.Adapter {
         await this.setupSensorSubscriptions();
         await this.setupSunNodes();
         await this.setupShutterControl();
+        await this.setupClimateControl();
     }
     // ---- sensor subscriptions ----
     /**
@@ -623,6 +630,119 @@ class Faut extends utils.Adapter {
             await this.setStateAsync(`${relId}.azimuth`, { val: azimuth, ack: true });
         }
     }
+    // ---- climate control ----
+    /** Walks the tree and populates climateRooms + heizungRelId. */
+    collectClimateData(nodes, prefix) {
+        for (const node of nodes) {
+            const relId = prefix ? `${prefix}.${node.id}` : node.id;
+            const cfg = node.config ?? {};
+            if (node.type === 'Heizung' && this.heizungRelId === null) {
+                this.heizungRelId = relId;
+            }
+            if (node.type === 'Raum' && cfg.klimasteuerung) {
+                const hasPresence = !!(cfg.bewegungserkennung);
+                this.climateRooms.set(relId, {
+                    relId,
+                    solltemperatur: cfg.solltemperatur ?? 20,
+                    absenkungNacht: cfg.absenkungNacht ?? 4,
+                    absenkungAbwesend: cfg.absenkungAbwesend ?? 3,
+                    hasPresence,
+                });
+                if (hasPresence) {
+                    this.climatePresenceIds.add(`${this.namespace}.${relId}.presence`);
+                }
+            }
+            if (node.children?.length)
+                this.collectClimateData(node.children, relId);
+        }
+    }
+    /** Initialises climate control: subscribes to states and sets initial setpoints. */
+    async setupClimateControl() {
+        const tree = Array.isArray(this.config.grundstueck)
+            ? this.config.grundstueck
+            : [];
+        this.collectClimateData(tree, '');
+        if (this.climateRooms.size === 0 && this.heizungRelId === null)
+            return;
+        this.logClimate(`Climate control: ${this.climateRooms.size} room(s)` +
+            (this.heizungRelId ? `, Heizung: ${this.labelFor(this.heizungRelId)}` : ', no Heizung node'));
+        // Initialise / subscribe Heizung states
+        if (this.heizungRelId) {
+            const heizNode = this.findNodeByRelId(tree, this.heizungRelId);
+            const heizCfg = heizNode?.config ?? {};
+            const hpState = await this.getStateAsync(`${this.heizungRelId}.heizperiode`);
+            const esState = await this.getStateAsync(`${this.heizungRelId}.energiesparmodus`);
+            if (!hpState?.val && hpState?.val !== false)
+                await this.setStateAsync(`${this.heizungRelId}.heizperiode`, { val: heizCfg.heizperiodeAktiv ?? false, ack: true });
+            if (!esState?.val && esState?.val !== false)
+                await this.setStateAsync(`${this.heizungRelId}.energiesparmodus`, { val: heizCfg.energiesparmodusAktiv ?? false, ack: true });
+            this.subscribeStates(`${this.heizungRelId}.heizperiode`);
+            this.subscribeStates(`${this.heizungRelId}.energiesparmodus`);
+        }
+        // Subscribe to presence states of climate rooms (own states)
+        for (const room of this.climateRooms.values()) {
+            if (room.hasPresence)
+                this.subscribeStates(`${room.relId}.presence`);
+        }
+        // Set initial setpoints
+        for (const room of this.climateRooms.values()) {
+            await this.updateClimateSetpoint(room);
+        }
+    }
+    /** Calculates and writes setpoint + mode for one climate room. */
+    async updateClimateSetpoint(room) {
+        const heizperiode = this.heizungRelId
+            ? !!((await this.getStateAsync(`${this.heizungRelId}.heizperiode`))?.val)
+            : true;
+        const energiesparmodus = this.heizungRelId
+            ? !!((await this.getStateAsync(`${this.heizungRelId}.energiesparmodus`))?.val)
+            : false;
+        const nightMode = !!((await this.getStateAsync('global.nightMode'))?.val);
+        const presence = room.hasPresence
+            ? (await this.getStateAsync(`${room.relId}.presence`))?.val ?? 'absent'
+            : 'present';
+        let mode;
+        let setpoint;
+        if (!heizperiode) {
+            mode = 'off';
+            setpoint = 5; // frost protection
+        }
+        else if (energiesparmodus || presence === 'absent') {
+            mode = 'absent';
+            setpoint = room.solltemperatur - room.absenkungAbwesend;
+        }
+        else if (nightMode) {
+            mode = 'night';
+            setpoint = room.solltemperatur - room.absenkungNacht;
+        }
+        else {
+            mode = 'normal';
+            setpoint = room.solltemperatur;
+        }
+        this.logClimate(`${this.labelFor(room.relId)}: mode=${mode}, setpoint=${setpoint}\u00b0C`);
+        await this.setStateAsync(`${room.relId}.climate.setpoint`, { val: setpoint, ack: true });
+        await this.setStateAsync(`${room.relId}.climate.mode`, { val: mode, ack: true });
+    }
+    /** Updates setpoints for all climate rooms. */
+    async updateAllClimateSetpoints() {
+        for (const room of this.climateRooms.values()) {
+            await this.updateClimateSetpoint(room);
+        }
+    }
+    /** Finds a node in the tree by its relId. */
+    findNodeByRelId(nodes, targetRelId, prefix = '') {
+        for (const node of nodes) {
+            const relId = prefix ? `${prefix}.${node.id}` : node.id;
+            if (relId === targetRelId)
+                return node;
+            if (node.children?.length) {
+                const found = this.findNodeByRelId(node.children, targetRelId, relId);
+                if (found)
+                    return found;
+            }
+        }
+        return null;
+    }
     // ---- shutter control ----
     /** Builds relIdToLabel from the tree (full label path per node). */
     buildLabelMap(nodes, prefix, labelPrefix) {
@@ -1087,6 +1207,17 @@ class Faut extends utils.Adapter {
                     states: { dark: 'Dark', twilight: 'Twilight', bright: 'Bright' },
                 });
             }
+            if (cfg.klimasteuerung) {
+                specs.push({ id: 'climate.setpoint', name: 'Climate Setpoint', dataType: 'number', role: 'value.temperature', unit: '\u00b0C', def: cfg.solltemperatur ?? 20 });
+                specs.push({
+                    id: 'climate.mode', name: 'Climate Mode', dataType: 'string', role: 'text', def: 'normal',
+                    states: { normal: 'Normal', night: 'Night', absent: 'Absent', off: 'Off' },
+                });
+            }
+        }
+        else if (nodeType === 'Heizung') {
+            specs.push({ id: 'heizperiode', name: 'Heizperiode', dataType: 'boolean', role: 'switch', def: cfg.heizperiodeAktiv ?? false, write: true });
+            specs.push({ id: 'energiesparmodus', name: 'Energiesparmodus', dataType: 'boolean', role: 'switch', def: cfg.energiesparmodusAktiv ?? false, write: true });
         }
         // Common sensor states (all leaf sensor types, not Raum or Sonne)
         if (nodeType !== 'Raum' && nodeType !== 'Sonne') {
@@ -1200,6 +1331,39 @@ class Faut extends utils.Adapter {
             this.handleNightModeForShutters(!!state.val).catch(e => {
                 this.log.error(`Shutter night mode reaction failed: ${e.message}`);
             });
+            // Also update climate setpoints when night mode changes
+            if (this.climateRooms.size > 0) {
+                this.updateAllClimateSetpoints().catch(e => {
+                    this.log.error(`Climate night mode update failed: ${e.message}`);
+                });
+            }
+        }
+        // Climate: Heizung state write-through (ack=false) and setpoint update (ack=true)
+        if (this.heizungRelId) {
+            const hpId = `${this.namespace}.${this.heizungRelId}.heizperiode`;
+            const esId = `${this.namespace}.${this.heizungRelId}.energiesparmodus`;
+            if (id === hpId || id === esId) {
+                if (!state.ack) {
+                    this.setStateAsync(id.slice(this.namespace.length + 1), { val: !!state.val, ack: true }).catch(e => {
+                        this.log.error(`Heizung write-through failed: ${e.message}`);
+                    });
+                }
+                else {
+                    this.updateAllClimateSetpoints().catch(e => {
+                        this.log.error(`Climate heizung update failed: ${e.message}`);
+                    });
+                }
+            }
+        }
+        // Climate: room presence changed → update that room's setpoint
+        if (state.ack && this.climatePresenceIds.has(id)) {
+            const roomRelId = id.slice(this.namespace.length + 1).replace(/\.presence$/, '');
+            const room = this.climateRooms.get(roomRelId);
+            if (room) {
+                this.updateClimateSetpoint(room).catch(e => {
+                    this.log.error(`Climate presence update failed: ${e.message}`);
+                });
+            }
         }
     }
 }
