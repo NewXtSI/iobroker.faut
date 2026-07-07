@@ -27,7 +27,7 @@ export default function AlexaDetailPanel({ node, socket, theme, onConfigChange }
     const handleTest = (): void => {
         if (!dpAlexa) return;
         setTesting(true);
-        socket.setState(`${dpAlexa}.Command.Speak`, {
+        socket.setState(`${dpAlexa}.Commands.speak`, {
             val: 'Das ist ein Test von ioBroker faut.',
             ack: false,
         });
@@ -53,7 +53,7 @@ export default function AlexaDetailPanel({ node, socket, theme, onConfigChange }
                         disabled={testing}
                         onClick={handleTest}
                     >
-                        {I18n.t('Test')} (Command.Speak)
+                        {I18n.t('Test')} (Commands.speak)
                     </Button>
                 </Box>
             )}
@@ -65,7 +65,7 @@ export default function AlexaDetailPanel({ node, socket, theme, onConfigChange }
                     theme={theme}
                     title={I18n.t('Select Alexa device')}
                     selected={dpAlexa}
-                    statesOnly={false}
+                    types={['channel', 'device', 'folder'] as any}
                     onClose={() => setSelectOpen(false)}
                     onOk={id => {
                         if (typeof id === 'string' && id) onConfigChange('dpAlexa', id);
