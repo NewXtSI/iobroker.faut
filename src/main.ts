@@ -74,6 +74,8 @@ class Faut extends utils.Adapter {
 	private shutterDailyTimer: ReturnType<typeof setTimeout> | null = null;
 	/** Last seen values of foreign DPs – used to suppress duplicate extended-log entries. */
 	private readonly dpLastExtValues = new Map<string, unknown>();
+	/** Maps each node relId to a human-readable label path (e.g. "Gebäude.EG.Arbeitszimmer"). */
+	private readonly relIdToLabel = new Map<string, string>();
 
 	public constructor(options: Partial<utils.AdapterOptions> = {}) {
 		super({
@@ -204,6 +206,7 @@ class Faut extends utils.Adapter {
 			? (this.config.grundstueck as FautTreeNode[])
 			: [];
 
+		this.buildLabelMap(tree, '', '');
 		this.collectDpMappings(tree, '');
 		this.collectBatteryAndUnreachMappings(tree, '');
 
@@ -490,7 +493,7 @@ class Faut extends utils.Adapter {
 				// New motion: cancel cooldown, go to present
 				const existing = this.cooldownTimers.get(roomRelId);
 				if (existing !== undefined) { clearTimeout(existing); this.cooldownTimers.delete(roomRelId); }
-				this.logPresence(`${roomRelId}: motion detected on ${dpId} → present`);
+				this.logPresence(`${this.labelFor(roomRelId)}: motion detected on ${dpId} → present`);
 				await this.setStateAsync(`${roomRelId}.presence`, { val: 'present', ack: true });
 			} else {
 				// Motion cleared: check if another sensor is still active
@@ -507,18 +510,18 @@ class Faut extends utils.Adapter {
 					const existing = this.cooldownTimers.get(roomRelId);
 					if (existing !== undefined) clearTimeout(existing);
 
-					this.logPresence(`${roomRelId}: motion cleared on ${dpId} → cooldown (${room.cooldownMs / 1000}s)`);
+					this.logPresence(`${this.labelFor(roomRelId)}: motion cleared on ${dpId} → cooldown (${room.cooldownMs / 1000}s)`);
 					await this.setStateAsync(`${roomRelId}.presence`, { val: 'cooldown', ack: true });
 					const timer = setTimeout(() => {
 						this.cooldownTimers.delete(roomRelId);
-						this.logPresence(`${roomRelId}: cooldown expired → absent`);
+						this.logPresence(`${this.labelFor(roomRelId)}: cooldown expired → absent`);
 						this.setStateAsync(`${roomRelId}.presence`, { val: 'absent', ack: true }).catch(e => {
-							this.log.error(`Cooldown expire failed for ${roomRelId}: ${(e as Error).message}`);
+							this.log.error(`Cooldown expire failed for ${this.labelFor(roomRelId)}: ${(e as Error).message}`);
 						});
 					}, room.cooldownMs);
 					this.cooldownTimers.set(roomRelId, timer);
 				} else {
-					this.logPresence(`${roomRelId}: motion cleared on ${dpId}, but other sensor still active → staying present`);
+					this.logPresence(`${this.labelFor(roomRelId)}: motion cleared on ${dpId}, but other sensor still active → staying present`);
 				}
 			}
 		}
@@ -623,6 +626,21 @@ class Faut extends utils.Adapter {
 
 	// ---- shutter control ----
 
+	/** Builds relIdToLabel from the tree (full label path per node). */
+	private buildLabelMap(nodes: FautTreeNode[], prefix: string, labelPrefix: string): void {
+		for (const node of nodes) {
+			const relId     = prefix      ? `${prefix}.${node.id}`         : node.id;
+			const labelPath = labelPrefix ? `${labelPrefix}.${node.label}` : node.label;
+			this.relIdToLabel.set(relId, labelPath);
+			if (node.children?.length) this.buildLabelMap(node.children, relId, labelPath);
+		}
+	}
+
+	/** Returns the human-readable label path for a relId, or the relId itself as fallback. */
+	private labelFor(relId: string): string {
+		return this.relIdToLabel.get(relId) ?? relId;
+	}
+
 	/** Logs a message at debug level when [shuttercontrol] or [shuttercontrol_extended] is active. */
 	private logShutter(msg: string): void {
 		if (this.config.logShuttercontrol || this.config.logShuttercontrolExtended) {
@@ -701,17 +719,17 @@ class Faut extends utils.Adapter {
 
 		for (const room of this.shutterRooms.values()) {
 			this.logShutter(
-				`Room "${room.relId}": direction=${room.himmelsrichtung}°, ` +
+				`Room "${this.labelFor(room.relId)}": direction=${room.himmelsrichtung}°, ` +
 				`riseOffset=${room.aufgangOffset}min, setOffset=${room.untergangOffset}min, ` +
 				`glare=${room.blendschutz}, heat=${room.hitzeschutz}, ` +
 				`shutters=${room.rolladenRelIds.length}`,
 			);
-			for (const rel of room.rolladenRelIds) this.logShutter(`  Rolladen: ${rel}`);
+			for (const rel of room.rolladenRelIds) this.logShutter(`  Rolladen: ${this.labelFor(rel)}`);
 		}
 
 		// Log context sources
 		this.logShutter(this.sunNodeRelIds.length > 0
-			? `Sun node(s): ${this.sunNodeRelIds.join(', ')}`
+			? `Sun node(s): ${this.sunNodeRelIds.map(r => this.labelFor(r)).join(', ')}`
 			: 'No sun node found – sun-based control unavailable.');
 
 		const globalLuxDpId = this.findGlobalLuxDp(tree);
@@ -747,7 +765,7 @@ class Faut extends utils.Adapter {
 		const msToSunset  = sunsetMs  - Date.now();
 
 		this.logShutter(
-			`Room "${room.relId}": sunrise@${new Date(sunriseMs).toLocaleTimeString()}, ` +
+			`Room "${this.labelFor(room.relId)}": sunrise@${new Date(sunriseMs).toLocaleTimeString()}, ` +
 			`sunset@${new Date(sunsetMs).toLocaleTimeString()}`,
 		);
 
@@ -768,11 +786,11 @@ class Faut extends utils.Adapter {
 		// ---- Schedule future events ----
 		if (msToSunrise > 0) {
 			room.sunriseTimer = setTimeout(() => { room.sunriseTimer = null; this.triggerShutterSunrise(room); }, msToSunrise);
-			this.logShutter(`Room "${room.relId}": sunrise timer in ${Math.round(msToSunrise / 60_000)}min`);
+			this.logShutter(`Room "${this.labelFor(room.relId)}": sunrise timer in ${Math.round(msToSunrise / 60_000)}min`);
 		}
 		if (msToSunset > 0) {
 			room.sunsetTimer = setTimeout(() => { room.sunsetTimer = null; this.triggerShutterSunset(room); }, msToSunset);
-			this.logShutter(`Room "${room.relId}": sunset timer in ${Math.round(msToSunset / 60_000)}min`);
+			this.logShutter(`Room "${this.labelFor(room.relId)}": sunset timer in ${Math.round(msToSunset / 60_000)}min`);
 		}
 	}
 
@@ -780,10 +798,10 @@ class Faut extends utils.Adapter {
 	private triggerShutterSunrise(room: ShutterRoomEntry): void {
 		this.getStateAsync('global.nightMode').then(nm => {
 			if (nm?.val) {
-				this.logShutter(`Room "${room.relId}": sunrise – night mode active, staying closed`);
+				this.logShutter(`Room "${this.labelFor(room.relId)}": sunrise – night mode active, staying closed`);
 				return;
 			}
-			this.logShutter(`Room "${room.relId}": sunrise → opening shutters`);
+			this.logShutter(`Room "${this.labelFor(room.relId)}": sunrise → opening shutters`);
 			for (const rel of room.rolladenRelIds)
 				this.applyShutterState(rel, 'open', 'sunrise').catch(e =>
 					this.log.error(`Shutter sunrise error: ${(e as Error).message}`));
@@ -792,7 +810,7 @@ class Faut extends utils.Adapter {
 
 	/** Fires at sunset (+ offset): closes all shutters. */
 	private triggerShutterSunset(room: ShutterRoomEntry): void {
-		this.logShutter(`Room "${room.relId}": sunset → closing shutters`);
+		this.logShutter(`Room "${this.labelFor(room.relId)}": sunset → closing shutters`);
 		for (const rel of room.rolladenRelIds)
 			this.applyShutterState(rel, 'closed', 'sunset').catch(e =>
 				this.log.error(`Shutter sunset error: ${(e as Error).message}`));
@@ -804,7 +822,7 @@ class Faut extends utils.Adapter {
 
 		if (isNight) {
 			for (const room of this.shutterRooms.values()) {
-				this.logShutter(`Room "${room.relId}": night mode ON → closing`);
+				this.logShutter(`Room "${this.labelFor(room.relId)}": night mode ON → closing`);
 				for (const rel of room.rolladenRelIds)
 					await this.applyShutterState(rel, 'closed', 'night mode activated');
 			}
@@ -814,16 +832,16 @@ class Faut extends utils.Adapter {
 		// Night mode turned OFF → open only if currently daytime
 		const now = new Date();
 		for (const room of this.shutterRooms.values()) {
-			if (this.sunLat === 0 && this.sunLng === 0) { this.logShutter(`Room "${room.relId}": night mode OFF, no geo`); continue; }
+			if (this.sunLat === 0 && this.sunLng === 0) { this.logShutter(`Room "${this.labelFor(room.relId)}": night mode OFF, no geo`); continue; }
 			const times = SunCalc.getTimes(now, this.sunLat, this.sunLng);
 			const rise  = new Date(times.sunrise.getTime() + room.aufgangOffset   * 60_000);
 			const set   = new Date(times.sunset.getTime()  + room.untergangOffset * 60_000);
 			if (now >= rise && now < set) {
-				this.logShutter(`Room "${room.relId}": night mode OFF, daytime → opening`);
+				this.logShutter(`Room "${this.labelFor(room.relId)}": night mode OFF, daytime → opening`);
 				for (const rel of room.rolladenRelIds)
 					await this.applyShutterState(rel, 'open', 'night mode deactivated, daytime');
 			} else {
-				this.logShutter(`Room "${room.relId}": night mode OFF, outside daytime → staying closed`);
+				this.logShutter(`Room "${this.labelFor(room.relId)}": night mode OFF, outside daytime → staying closed`);
 			}
 		}
 	}
@@ -835,7 +853,7 @@ class Faut extends utils.Adapter {
 	private async applyShutterState(rolladenRelId: string, newState: string, reason: string): Promise<void> {
 		// Check if this actuator is enabled
 		if (this.rolladenPosCfg.get(rolladenRelId)?.aktiviert === false) {
-			this.logShutter(`${rolladenRelId}: deaktiviert – ignoring [${reason}]`);
+			this.logShutter(`${this.labelFor(rolladenRelId)}: deaktiviert – ignoring [${reason}]`);
 			return;
 		}
 
@@ -843,13 +861,13 @@ class Faut extends utils.Adapter {
 		try {
 			const cur = await this.getStateAsync(`${rolladenRelId}.state`);
 			if (cur?.val === 'manual') {
-				this.logShutter(`${rolladenRelId}: manual – ignoring [${reason}]`);
+				this.logShutter(`${this.labelFor(rolladenRelId)}: manual – ignoring [${reason}]`);
 				return;
 			}
 		} catch { /* state object not yet created – proceed */ }
 
 		await this.setStateAsync(`${rolladenRelId}.state`, { val: newState, ack: true });
-		this.logShutter(`${rolladenRelId}: state → ${newState} [${reason}]`);
+		this.logShutter(`${this.labelFor(rolladenRelId)}: state → ${newState} [${reason}]`);
 
 		const pos = this.getShutterTargetPosition(rolladenRelId, newState);
 		if (pos === null) return; // sunblock/heatblock handled later; manual = no-op
@@ -858,10 +876,10 @@ class Faut extends utils.Adapter {
 			const dpId = this.rolladenRelIdToPosDp.get(rolladenRelId);
 			if (dpId) {
 				await this.setForeignStateAsync(dpId, { val: pos, ack: false });
-				this.logShutter(`${rolladenRelId}: wrote position=${pos} → ${dpId}`);
+				this.logShutter(`${this.labelFor(rolladenRelId)}: wrote position=${pos} → ${dpId}`);
 			}
 		} else {
-			this.logShutter(`${rolladenRelId}: steuerungAktiviert=false → would set position=${pos} [${reason}]`);
+			this.logShutter(`${this.labelFor(rolladenRelId)}: steuerungAktiviert=false → would set position=${pos} [${reason}]`);
 		}
 	}
 
