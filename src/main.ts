@@ -122,6 +122,19 @@ class Faut extends utils.Adapter {
 		this.log.info('Faut adapter started');
 		this.setState('info.connection', { val: true, ack: true });
 		await this.migrateConfig();
+
+		const flags = [
+			'logShuttercontrol', 'logShuttercontrolExtended',
+			'logAdmin', 'logAlexa', 'logPresence',
+			'logClimate', 'logClimateExtended',
+			'logLight', 'logLightExtended',
+			'logEnergy', 'logEnergyExtended',
+		] as const;
+		const active   = flags.filter(f => !!(this.config as unknown as Record<string, unknown>)[f]);
+		const inactive = flags.filter(f => !(this.config as unknown as Record<string, unknown>)[f]);
+		this.log.info(`Log flags ON : ${active.length   ? active.join(', ')   : '(none)'}`);
+		this.log.info(`Log flags OFF: ${inactive.length ? inactive.join(', ') : '(none)'}`);
+
 		await this.syncTreeToObjects();
 		await this.setupGlobalStates();
 
