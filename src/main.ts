@@ -5,6 +5,17 @@
 import * as utils from '@iobroker/adapter-core';
 import * as SunCalc from 'suncalc2';
 import { type FautNodeConfig, type FautTreeNode } from './lib/treeTypes';
+import {
+	type TrackerAnchors,
+	MONTH_LABELS,
+	QUARTER_MONTHS,
+	computeDelta,
+	defaultAnchors,
+	getISOWeek,
+	mmOf,
+	quarterOf,
+	rolloverAnchors,
+} from './lib/consumptionTracker';
 
 /** Runtime configuration for a room climate control. */
 interface ClimateRoomEntry {
@@ -13,6 +24,18 @@ interface ClimateRoomEntry {
 	absenkungNacht:     number;
 	absenkungAbwesend:  number;
 	hasPresence:        boolean;
+}
+
+/** Configuration for one consumption history tracker. */
+interface ConsumptionConfig {
+	/** Short identifier, used in state paths (e.g. 'grid', 'feedin', 'solar', 'oil'). */
+	id:          string;
+	label:       string;
+	unit:        string;
+	/** true for oil tank: reading goes DOWN as fuel is consumed. */
+	descending:  boolean;
+	/** One or more foreign DP IDs whose values are SUMMED to form the tracker reading. */
+	dpIds:       string[];
 }
 
 /** Runtime configuration for a room’s presence/dark sensor logic. */
@@ -97,6 +120,18 @@ class Faut extends utils.Adapter {
 	private readonly wechselrichterPowerDps = new Map<string, string>();
 	/** Energy management: last seen power value per foreign DP (W). */
 	private readonly energiePowerCache = new Map<string, number>();
+	/** Consumption history: tracker configs keyed by tracker ID. */
+	private readonly consumptionConfigs   = new Map<string, ConsumptionConfig>();
+	/** Consumption history: current (summed) meter reading per tracker. */
+	private readonly consumptionReadings  = new Map<string, number>();
+	/** Consumption history: last raw value per source DP (for multi-DP sum). */
+	private readonly consumptionSrcLast   = new Map<string, number>();
+	/** Consumption history: foreign DP ID → tracker IDs that use it. */
+	private readonly consumptionDpToTrackers = new Map<string, string[]>();
+	/** Consumption history: current anchor set per tracker. */
+	private readonly consumptionAnchors   = new Map<string, TrackerAnchors>();
+	/** Consumption history: midnight rollover timer. */
+	private consumptionMidnightTimer: ReturnType<typeof setTimeout> | null = null;
 
 	public constructor(options: Partial<utils.AdapterOptions> = {}) {
 		super({
@@ -171,6 +206,7 @@ class Faut extends utils.Adapter {
 		await this.setupShutterControl();
 		await this.setupClimateControl();
 		await this.setupEnergyControl();
+		await this.setupConsumptionTracking();
 	}
 
 	// ---- sensor subscriptions ----
@@ -786,6 +822,336 @@ class Faut extends utils.Adapter {
 		return null;
 	}
 
+	// ---- consumption tracking ----
+
+	/** Walks the tree and populates consumptionConfigs + consumptionDpToTrackers. */
+	private collectConsumptionConfigs(nodes: FautTreeNode[], prefix: string): void {
+		for (const node of nodes) {
+			const relId = prefix ? `${prefix}.${node.id}` : node.id;
+			const cfg   = (node.config as FautNodeConfig | undefined) ?? {};
+
+			if (node.type === 'Energie') {
+				if (cfg.dpStromzaehlerStand && !this.consumptionConfigs.has('grid')) {
+					const cc: ConsumptionConfig = { id: 'grid', label: 'Grid consumption (kWh)', unit: 'kWh', descending: false, dpIds: [cfg.dpStromzaehlerStand] };
+					this.consumptionConfigs.set('grid', cc);
+					this.consumptionDpToTrackers.set(cfg.dpStromzaehlerStand, ['grid']);
+				}
+				if (cfg.dpStromzaehlerEinspeisestand && !this.consumptionConfigs.has('feedin')) {
+					const cc: ConsumptionConfig = { id: 'feedin', label: 'Grid feed-in (kWh)', unit: 'kWh', descending: false, dpIds: [cfg.dpStromzaehlerEinspeisestand] };
+					this.consumptionConfigs.set('feedin', cc);
+					this.consumptionDpToTrackers.set(cfg.dpStromzaehlerEinspeisestand, ['feedin']);
+				}
+			}
+
+			if (node.type === 'Wechselrichter' && cfg.dpGesamterzeugung) {
+				if (!this.consumptionConfigs.has('solar')) {
+					const cc: ConsumptionConfig = { id: 'solar', label: 'Solar generation (kWh)', unit: 'kWh', descending: false, dpIds: [] };
+					this.consumptionConfigs.set('solar', cc);
+				}
+				const sc = this.consumptionConfigs.get('solar')!;
+				sc.dpIds.push(cfg.dpGesamterzeugung);
+				const trackers = this.consumptionDpToTrackers.get(cfg.dpGesamterzeugung) ?? [];
+				trackers.push('solar');
+				this.consumptionDpToTrackers.set(cfg.dpGesamterzeugung, trackers);
+			}
+
+			if (node.type === 'Heizung' && cfg.dpOelstand && !this.consumptionConfigs.has('oil')) {
+				const cc: ConsumptionConfig = { id: 'oil', label: 'Oil consumption (l)', unit: 'l', descending: true, dpIds: [cfg.dpOelstand] };
+				this.consumptionConfigs.set('oil', cc);
+				this.consumptionDpToTrackers.set(cfg.dpOelstand, ['oil']);
+			}
+
+			if (node.children?.length) this.collectConsumptionConfigs(node.children, relId);
+		}
+	}
+
+	/** Creates all ioBroker objects for one tracker + one year. */
+	private async ensureConsumptionObjects(id: string, unit: string, year: number): Promise<void> {
+		const base = `global.consumption.${id}`;
+		const yr   = String(year);
+		const numCommon = (name: string): ioBroker.StateCommon => ({
+			name, type: 'number', role: 'value', unit, read: true, write: false, def: 0,
+		} as ioBroker.StateCommon);
+
+		await this.extendObjectAsync(`${base}._anchors`, {
+			type: 'state',
+			common: { name: 'Anchors (JSON – writable for init)', type: 'string', role: 'json', read: true, write: true, def: '' } as ioBroker.StateCommon,
+			native: {},
+		});
+		await this.extendObjectAsync(`${base}.cumulativeReading`, {
+			type: 'state', common: numCommon('Cumulative Reading'), native: {},
+		});
+		for (const k of [
+			'01_currentDay', '01_previousDay',
+			'02_currentWeek', '02_previousWeek',
+			'03_currentMonth', '03_previousMonth',
+			'05_currentYear', '05_previousYear',
+		]) {
+			await this.extendObjectAsync(`${base}.currentYear.consumed.${k}`, {
+				type: 'state', common: numCommon(k.replace(/^\d\d_/, '')), native: {},
+			});
+		}
+		for (const [mm, label] of Object.entries(MONTH_LABELS)) {
+			await this.extendObjectAsync(`${base}.${yr}.consumed.months.${label}`,       { type: 'state', common: numCommon(label.replace(/^\d\d_/, '')), native: {} });
+			await this.extendObjectAsync(`${base}.${yr}.meterReadings.months.${label}`,  { type: 'state', common: numCommon(label.replace(/^\d\d_/, '')), native: {} });
+			void mm;
+		}
+		for (const q of ['Q1', 'Q2', 'Q3', 'Q4']) {
+			await this.extendObjectAsync(`${base}.${yr}.consumed.quarters.${q}`,      { type: 'state', common: numCommon(q), native: {} });
+			await this.extendObjectAsync(`${base}.${yr}.meterReadings.quarters.${q}`, { type: 'state', common: numCommon(q), native: {} });
+		}
+		await this.extendObjectAsync(`${base}.${yr}.consumedCumulative`, { type: 'state', common: numCommon('Consumed cumulative'), native: {} });
+		await this.extendObjectAsync(`${base}.${yr}.readingCumulative`,  { type: 'state', common: numCommon('Reading cumulative'),  native: {} });
+	}
+
+	/** Tries to load persisted anchors; falls back to default (current reading = baseline). */
+	private async loadOrInitAnchors(id: string, currentReading: number, now: Date): Promise<TrackerAnchors> {
+		try {
+			const st = await this.getStateAsync(`global.consumption.${id}._anchors`);
+			if (st?.val && typeof st.val === 'string' && st.val.trim()) {
+				const parsed = JSON.parse(st.val) as TrackerAnchors;
+				if (typeof parsed.year === 'number') {
+					this.logEnergy(`Consumption ${id}: loaded anchors (${parsed.year}-${String(parsed.month + 1).padStart(2, '0')}-${String(parsed.dayOfMonth).padStart(2, '0')})`);
+					return parsed;
+				}
+			}
+		} catch (e) {
+			this.log.warn(`Consumption ${id}: could not parse anchors: ${(e as Error).message}`);
+		}
+		this.logEnergy(`Consumption ${id}: no anchors found — initialising from current reading ${currentReading}`);
+		const anchors = defaultAnchors(currentReading, now);
+		await this.saveConsumptionAnchors(id, anchors);
+		return anchors;
+	}
+
+	/** Persists the anchor set for a tracker to its own state. */
+	private async saveConsumptionAnchors(id: string, anchors: TrackerAnchors): Promise<void> {
+		this.consumptionAnchors.set(id, anchors);
+		await this.setStateAsync(`global.consumption.${id}._anchors`, { val: JSON.stringify(anchors), ack: true });
+	}
+
+	/** Writes all live "currentYear.consumed.*" states for one tracker. */
+	private async updateConsumptionLive(id: string, reading: number, anchors: TrackerAnchors, now: Date): Promise<void> {
+		const cfg  = this.consumptionConfigs.get(id)!;
+		const base = `global.consumption.${id}.currentYear.consumed`;
+
+		const d = computeDelta(anchors.startOfDay,   reading, cfg.descending);
+		const w = computeDelta(anchors.startOfWeek,  reading, cfg.descending);
+		const m = computeDelta(anchors.startOfMonth, reading, cfg.descending);
+		const y = computeDelta(anchors.startOfYear,  reading, cfg.descending);
+
+		await Promise.all([
+			this.setStateAsync(`${base}.01_currentDay`,    { val: d, ack: true }),
+			this.setStateAsync(`${base}.01_previousDay`,   { val: anchors.prevDayConsumed,   ack: true }),
+			this.setStateAsync(`${base}.02_currentWeek`,   { val: w, ack: true }),
+			this.setStateAsync(`${base}.02_previousWeek`,  { val: anchors.prevWeekConsumed,  ack: true }),
+			this.setStateAsync(`${base}.03_currentMonth`,  { val: m, ack: true }),
+			this.setStateAsync(`${base}.03_previousMonth`, { val: anchors.prevMonthConsumed, ack: true }),
+			this.setStateAsync(`${base}.05_currentYear`,   { val: y, ack: true }),
+			this.setStateAsync(`${base}.05_previousYear`,  { val: anchors.prevYearConsumed,  ack: true }),
+		]);
+		void now; // year context available for future extension
+	}
+
+	/**
+	 * Writes all per-year historical states (monthly breakdown, quarters, cumulative)
+	 * for the year stored in `anchors.year`.
+	 */
+	private async updateConsumptionHistory(id: string, anchors: TrackerAnchors, currentReading: number): Promise<void> {
+		const cfg  = this.consumptionConfigs.get(id)!;
+		const base = `global.consumption.${id}.${anchors.year}`;
+
+		const quarterConsumed: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0 };
+		const quarterReading:  Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0 };
+		let yearConsumed = 0;
+
+		for (let m0 = 0; m0 <= 11; m0++) {
+			const mm     = mmOf(m0 + 1); // '01'..'12'
+			const label  = MONTH_LABELS[mm];
+			let consumed = 0;
+			let reading  = 0;
+
+			if (m0 < anchors.month) {
+				// Completed month in this year
+				consumed = anchors.monthlyConsumed[mm] ?? 0;
+				reading  = anchors.monthlyReadings[mm] ?? 0;
+			} else if (m0 === anchors.month) {
+				// Current (live) month
+				consumed = computeDelta(anchors.startOfMonth, currentReading, cfg.descending);
+				reading  = currentReading;
+			}
+			// Future months remain 0
+
+			await this.setStateAsync(`${base}.consumed.months.${label}`,      { val: consumed, ack: true });
+			await this.setStateAsync(`${base}.meterReadings.months.${label}`, { val: reading,  ack: true });
+
+			yearConsumed += consumed;
+			const q = quarterOf(m0);
+			quarterConsumed[q] += consumed;
+			if (reading > 0) quarterReading[q] = reading;
+		}
+
+		for (const q of [1, 2, 3, 4] as const) {
+			await this.setStateAsync(`${base}.consumed.quarters.Q${q}`,      { val: quarterConsumed[q], ack: true });
+			await this.setStateAsync(`${base}.meterReadings.quarters.Q${q}`, { val: quarterReading[q],  ack: true });
+		}
+		await this.setStateAsync(`${base}.consumedCumulative`, { val: yearConsumed,    ack: true });
+		await this.setStateAsync(`${base}.readingCumulative`,  { val: currentReading, ack: true });
+	}
+
+	/** Sets up all consumption trackers: object creation, anchor loading, subscriptions. */
+	private async setupConsumptionTracking(): Promise<void> {
+		const tree: FautTreeNode[] = Array.isArray(this.config.grundstueck)
+			? (this.config.grundstueck as FautTreeNode[])
+			: [];
+		this.collectConsumptionConfigs(tree, '');
+
+		if (this.consumptionConfigs.size === 0) return;
+
+		this.logEnergy(`Consumption tracking: ${[...this.consumptionConfigs.keys()].join(', ')}`);
+
+		const now  = new Date();
+		const year = now.getFullYear();
+
+		// Ensure global.consumption folder exists
+		await this.extendObjectAsync('global.consumption', {
+			type: 'folder', common: { name: 'Consumption history' }, native: {},
+		});
+
+		for (const [id, cc] of this.consumptionConfigs) {
+			await this.ensureConsumptionObjects(id, cc.unit, year);
+
+			// Subscribe to _anchors so the user can write a corrected JSON
+			this.subscribeStates(`global.consumption.${id}._anchors`);
+
+			// Read initial values from source DPs
+			let currentReading = 0;
+			for (const dpId of cc.dpIds) {
+				this.subscribeForeignStates(dpId);
+				try {
+					const st  = await this.getForeignStateAsync(dpId);
+					const val = Number(st?.val) || 0;
+					this.consumptionSrcLast.set(dpId, val);
+					currentReading += val;
+				} catch (e) {
+					this.log.warn(`Consumption ${id}: initial read of ${dpId} failed: ${(e as Error).message}`);
+				}
+			}
+			this.consumptionReadings.set(id, currentReading);
+
+			// Load (or initialise) anchors, then apply catch-up rollover
+			let anchors = await this.loadOrInitAnchors(id, currentReading, now);
+			const { anchors: rolled, closedMonths, yearRolled } = rolloverAnchors(anchors, currentReading, now, cc.descending);
+			if (closedMonths.length > 0 || yearRolled) {
+				this.logEnergy(`Consumption ${id}: catch-up rollover (${closedMonths.length} month(s), yearRolled=${yearRolled})`);
+				if (yearRolled) await this.ensureConsumptionObjects(id, cc.unit, year);
+				anchors = rolled;
+				await this.saveConsumptionAnchors(id, anchors);
+			}
+			this.consumptionAnchors.set(id, anchors);
+
+			// Write initial state values
+			await this.setStateAsync(`global.consumption.${id}.cumulativeReading`, { val: currentReading, ack: true });
+			await this.updateConsumptionLive(id, currentReading, anchors, now);
+			await this.updateConsumptionHistory(id, anchors, currentReading);
+		}
+
+		this.scheduleConsumptionMidnight();
+	}
+
+	/** Handles a source DP value change: updates reading cache and live states. */
+	private handleConsumptionDpChange(dpId: string, rawVal: unknown): void {
+		const val = Number(rawVal) || 0;
+		this.consumptionSrcLast.set(dpId, val);
+
+		for (const trackerId of this.consumptionDpToTrackers.get(dpId) ?? []) {
+			const cc      = this.consumptionConfigs.get(trackerId);
+			const anchors = this.consumptionAnchors.get(trackerId);
+			if (!cc || !anchors) continue;
+
+			let newReading = 0;
+			for (const dpId2 of cc.dpIds) newReading += this.consumptionSrcLast.get(dpId2) ?? 0;
+			this.consumptionReadings.set(trackerId, newReading);
+
+			const now = new Date();
+			this.setStateAsync(`global.consumption.${trackerId}.cumulativeReading`, { val: newReading, ack: true }).catch(() => null);
+			this.updateConsumptionLive(trackerId, newReading, anchors, now).catch(e =>
+				this.log.error(`Consumption live update (${trackerId}) failed: ${(e as Error).message}`));
+
+			const d = computeDelta(anchors.startOfDay, newReading, cc.descending);
+			this.logEnergyExtended(`Consumption ${trackerId}: reading=${newReading} ${cc.unit}, today=${d} ${cc.unit}`);
+		}
+	}
+
+	/** Handles user writing to a _anchors state — parse JSON and apply immediately. */
+	private async handleConsumptionAnchorWrite(ownRelId: string, val: unknown): Promise<void> {
+		// Extract tracker id from 'global.consumption.<id>._anchors'
+		const parts = ownRelId.split('.');
+		if (parts.length < 4) return; // safety
+		const trackerId = parts[2];
+		if (!this.consumptionConfigs.has(trackerId)) return;
+
+		if (typeof val !== 'string' || !val.trim()) return;
+		let newAnchors: TrackerAnchors;
+		try {
+			newAnchors = JSON.parse(val) as TrackerAnchors;
+			if (typeof newAnchors.year !== 'number') throw new Error('missing year field');
+		} catch (e) {
+			this.log.warn(`Consumption ${trackerId}: invalid _anchors JSON — ${(e as Error).message}`);
+			return;
+		}
+
+		await this.saveConsumptionAnchors(trackerId, newAnchors);
+		const reading = this.consumptionReadings.get(trackerId) ?? 0;
+		const year    = newAnchors.year;
+		await this.ensureConsumptionObjects(trackerId, this.consumptionConfigs.get(trackerId)!.unit, year);
+		await this.setStateAsync(`global.consumption.${trackerId}.cumulativeReading`, { val: reading, ack: true });
+		await this.updateConsumptionLive(trackerId, reading, newAnchors, new Date());
+		await this.updateConsumptionHistory(trackerId, newAnchors, reading);
+		this.logEnergy(`Consumption ${trackerId}: anchors updated by user write`);
+	}
+
+	/** Performs the midnight rollover for all trackers, then reschedules itself. */
+	private async doConsumptionRollover(): Promise<void> {
+		const now = new Date();
+		this.logEnergy(`Consumption: midnight rollover at ${now.toISOString()}`);
+
+		for (const [id, anchors] of this.consumptionAnchors) {
+			const cc      = this.consumptionConfigs.get(id)!;
+			const reading = this.consumptionReadings.get(id) ?? 0;
+			const { anchors: rolled, yearRolled } = rolloverAnchors(anchors, reading, now, cc.descending);
+
+			if (yearRolled) await this.ensureConsumptionObjects(id, cc.unit, now.getFullYear());
+
+			await this.saveConsumptionAnchors(id, rolled);
+			await this.updateConsumptionLive(id, reading, rolled, now);
+			await this.updateConsumptionHistory(id, rolled, reading);
+
+			this.logEnergyExtended(
+				`Consumption rollover ${id}: prevDay=${rolled.prevDayConsumed} ${cc.unit}` +
+				`, prevWeek=${rolled.prevWeekConsumed} ${cc.unit}`,
+			);
+		}
+
+		this.scheduleConsumptionMidnight();
+	}
+
+	/** Schedules a one-shot timer that fires 5 seconds past the next local midnight. */
+	private scheduleConsumptionMidnight(): void {
+		if (this.consumptionMidnightTimer !== null) {
+			clearTimeout(this.consumptionMidnightTimer);
+			this.consumptionMidnightTimer = null;
+		}
+		const now      = new Date();
+		const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 5);
+		const ms       = midnight.getTime() - now.getTime();
+		this.consumptionMidnightTimer = setTimeout(() => {
+			this.doConsumptionRollover().catch(e =>
+				this.log.error(`Consumption midnight rollover failed: ${(e as Error).message}`));
+		}, ms);
+		this.log.debug(`[consumption] Next rollover in ${Math.round(ms / 60_000)} min`);
+	}
+
 	// ---- energy management ----
 
 	/** Walks the tree and fills energieVerbrauchDpId + wechselrichterPowerDps. */
@@ -1377,6 +1743,7 @@ class Faut extends utils.Adapter {
 			for (const timer of this.unreachTimers.values()) clearTimeout(timer);
 			if (this.sunIntervalTimer !== null) clearInterval(this.sunIntervalTimer);
 			if (this.shutterDailyTimer !== null) clearTimeout(this.shutterDailyTimer);
+			if (this.consumptionMidnightTimer !== null) clearTimeout(this.consumptionMidnightTimer);
 			for (const room of this.shutterRooms.values()) {
 				if (room.sunriseTimer !== null) clearTimeout(room.sunriseTimer);
 				if (room.sunsetTimer  !== null) clearTimeout(room.sunsetTimer);
@@ -1479,9 +1846,20 @@ class Faut extends utils.Adapter {
 			}
 		}
 
+		// Consumption tracking: source DP changed (foreign state)
+		if (this.consumptionDpToTrackers.has(id)) {
+			this.handleConsumptionDpChange(id, state.val);
+		}
+
+		// Consumption tracking: user wrote new anchors JSON (own state, ack=false)
+		if (!state.ack && id.startsWith(`${this.namespace}.global.consumption.`) && id.endsWith('._anchors')) {
+			this.handleConsumptionAnchorWrite(id.slice(this.namespace.length + 1), state.val).catch(e =>
+				this.log.error(`Consumption anchor write failed: ${(e as Error).message}`));
+			return;
+		}
+
 		// Energy: Wechselrichter power or Netzbezug changed → recalc Hausverbrauch
-		if (this.energieVerbrauchDpId === id || this.wechselrichterPowerDps.has(id)) {
-			this.energiePowerCache.set(id, Number(state.val) || 0);
+		if (this.energieVerbrauchDpId === id || this.wechselrichterPowerDps.has(id)) {			this.energiePowerCache.set(id, Number(state.val) || 0);
 			this.recalcHausverbrauch().catch(e => {
 				this.log.error(`Hausverbrauch recalc failed: ${(e as Error).message}`);
 			});
