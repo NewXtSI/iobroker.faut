@@ -23,7 +23,11 @@ export type FautNodeType =
     | 'Rolladen'
     | 'Ventilator'
     | 'Lampe'
-    | 'Alexa';
+    | 'Alexa'
+    // Energie sub-nodes
+    | 'Wechselrichter'
+    | 'Batteriespeicher'
+    | 'Solarpanel';
 
 export type NodeKind = 'location' | 'sensor' | 'actor';
 
@@ -57,6 +61,10 @@ export const NODE_TYPE_DEFS: Record<FautNodeType, NodeTypeDef> = {
     Ventilator:      { label: 'Ventilator (Aktor)',  kind: 'actor' },
     Lampe:           { label: 'Lampe (Aktor)',       kind: 'actor' },
     Alexa:           { label: 'Alexa (Aktor)',       kind: 'actor' },
+    // Energie sub-nodes
+    Wechselrichter:  { label: 'Wechselrichter',      kind: 'actor' },
+    Batteriespeicher: { label: 'Batteriespeicher',   kind: 'actor' },
+    Solarpanel:      { label: 'Solarpanel (Sensor)', kind: 'sensor' },
 };
 
 /** Which types may be created as direct children of each parent type (or root) */
@@ -65,7 +73,7 @@ export const ALLOWED_CHILDREN: Record<'root' | FautNodeType, FautNodeType[]> = {
     Garten:         ['Sonne'],
     Gebäude:        ['Etage', 'Raum'],
     Heizung:        [],
-    Energie:        [],
+    Energie:        ['Wechselrichter', 'Batteriespeicher', 'Solarpanel'],
     Umwelt:         ['Temperatur', 'Helligkeit', 'Regen', 'Sonne'],
     Person:         [],
     Etage:          ['Raum', 'Sonne', 'Alexa'],
@@ -81,6 +89,9 @@ export const ALLOWED_CHILDREN: Record<'root' | FautNodeType, FautNodeType[]> = {
     Ventilator:     [],
     Lampe:          [],
     Alexa:          [],
+    Wechselrichter: [],
+    Batteriespeicher: [],
+    Solarpanel:     [],
 };
 
 // ---- Node config ----
@@ -89,6 +100,7 @@ export interface FautNodeConfig {
     // Temperatur-specific
     dpTemperatur?: string;
     dpLuftfeuchtigkeit?: string;
+    aussentemperatursensor?: boolean;
     // Helligkeit-specific
     dpLux?: string;
     globalerSensor?: boolean;
@@ -131,6 +143,22 @@ export interface FautNodeConfig {
     // Heizung node
     heizperiodeAktiv?: boolean;
     energiesparmodusAktiv?: boolean;
+    dpOelstand?: string;
+    dpBetriebsart?: string;
+    dpStoerung?: string;
+    dpFehlertext?: string;
+    // Energie node
+    dpStromzaehlerStand?: string;
+    dpStromzaehlerEinspeisestand?: string;
+    dpStromzaehlerVerbrauch?: string;
+    // Wechselrichter
+    dpGesamterzeugung?: string;
+    dpWechselrichterPower?: string;
+    // Batteriespeicher
+    dpSoc?: string;
+    dpBatterieKwh?: string;
+    // Solarpanel
+    dpSolarpanelPower?: string;
 }
 
 // ---- Tree node ----

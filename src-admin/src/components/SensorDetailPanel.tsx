@@ -66,6 +66,20 @@ export default function SensorDetailPanel({ node, socket, theme, onConfigChange 
                 />
             ))}
 
+            {/* Temperatur: outside temperature sensor toggle (exclusive) */}
+            {node.type === 'Temperatur' && (
+                <FormControlLabel
+                    control={
+                        <Checkbox
+                            size="small"
+                            checked={cfg.aussentemperatursensor ?? false}
+                            onChange={e => onConfigChange('aussentemperatursensor', e.target.checked)}
+                        />
+                    }
+                    label={I18n.t('Outside temperature sensor (exclusive)')}
+                />
+            )}
+
             {/* Helligkeit: global sensor toggle (exclusive across all Helligkeit nodes) */}
             {node.type === 'Helligkeit' && (
                 <FormControlLabel

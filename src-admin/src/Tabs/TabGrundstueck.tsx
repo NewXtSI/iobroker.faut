@@ -41,6 +41,9 @@ import WaterDropIcon from '@mui/icons-material/WaterDrop';
 import WbSunnyIcon from '@mui/icons-material/WbSunny';
 import Brightness5Icon from '@mui/icons-material/Brightness5';
 import WhatshotIcon from '@mui/icons-material/Whatshot';
+import SolarPowerIcon from '@mui/icons-material/SolarPower';
+import BatteryChargingFullIcon from '@mui/icons-material/BatteryChargingFull';
+import ElectricalServicesIcon from '@mui/icons-material/ElectricalServices';
 
 import { I18n, type IobTheme } from '@iobroker/adapter-react-v5';
 import {
@@ -56,6 +59,8 @@ import RolladenDetailPanel from '../components/RolladenDetailPanel';
 import PersonDetailPanel from '../components/PersonDetailPanel';
 import AlexaDetailPanel from '../components/AlexaDetailPanel';
 import HeizungDetailPanel from '../components/HeizungDetailPanel';
+import EnergieDetailPanel from '../components/EnergieDetailPanel';
+import EnergyNodeDetailPanel from '../components/EnergyNodeDetailPanel';
 
 // ---- icon map ----
 
@@ -81,6 +86,9 @@ const TYPE_ICONS: Record<FautNodeType, SvgIconComponent> = {
     Ventilator:      AirIcon,
     Lampe:           LightbulbIcon,
     Alexa:           SpeakerIcon,
+    Wechselrichter:  ElectricalServicesIcon,
+    Batteriespeicher: BatteryChargingFullIcon,
+    Solarpanel:      SolarPowerIcon,
 };
 
 // ---- props ----
@@ -173,6 +181,20 @@ function clearGlobalSensor(nodes: FautTreeNode[], exceptId: string): FautTreeNod
         }
         if (node.children?.length) {
             updated = { ...updated, children: clearGlobalSensor(node.children, exceptId) };
+        }
+        return updated;
+    });
+}
+
+/** Clears aussentemperatursensor on all Temperatur nodes except the one with exceptId. */
+function clearAussentemperatursensor(nodes: FautTreeNode[], exceptId: string): FautTreeNode[] {
+    return nodes.map(node => {
+        let updated: FautTreeNode = node;
+        if (node.type === 'Temperatur' && node.id !== exceptId && node.config?.aussentemperatursensor) {
+            updated = { ...node, config: { ...(node.config ?? {}), aussentemperatursensor: false } };
+        }
+        if (node.children?.length) {
+            updated = { ...updated, children: clearAussentemperatursensor(node.children, exceptId) };
         }
         return updated;
     });
@@ -329,7 +351,9 @@ export default function TabGrundstueck({ native, socket, theme, onChange, instan
                         </Typography>
 
                         {/* Sensor config */}
-                        {NODE_TYPE_DEFS[selectedNode.type].kind === 'sensor' && selectedNode.type !== 'Sonne' && (
+                        {NODE_TYPE_DEFS[selectedNode.type].kind === 'sensor' &&
+                            selectedNode.type !== 'Sonne' &&
+                            selectedNode.type !== 'Solarpanel' && (
                             <SensorDetailPanel
                                 node={selectedNode}
                                 socket={socket}
@@ -338,6 +362,9 @@ export default function TabGrundstueck({ native, socket, theme, onChange, instan
                                     let newTree = updateNodeConfig(tree, selectedNode.id, key, value);
                                     if (key === 'globalerSensor' && value === true) {
                                         newTree = clearGlobalSensor(newTree, selectedNode.id);
+                                    }
+                                    if (key === 'aussentemperatursensor' && value === true) {
+                                        newTree = clearAussentemperatursensor(newTree, selectedNode.id);
                                     }
                                     setTree(newTree);
                                     onChange('grundstueck', newTree);
@@ -384,6 +411,38 @@ export default function TabGrundstueck({ native, socket, theme, onChange, instan
                         {selectedNode.type === 'Heizung' && (
                             <HeizungDetailPanel
                                 node={selectedNode}
+                                socket={socket}
+                                theme={theme}
+                                onConfigChange={(key, value) => {
+                                    const newTree = updateNodeConfig(tree, selectedNode.id, key, value);
+                                    setTree(newTree);
+                                    onChange('grundstueck', newTree);
+                                }}
+                            />
+                        )}
+
+                        {/* Energie config */}
+                        {selectedNode.type === 'Energie' && (
+                            <EnergieDetailPanel
+                                node={selectedNode}
+                                socket={socket}
+                                theme={theme}
+                                onConfigChange={(key, value) => {
+                                    const newTree = updateNodeConfig(tree, selectedNode.id, key, value);
+                                    setTree(newTree);
+                                    onChange('grundstueck', newTree);
+                                }}
+                            />
+                        )}
+
+                        {/* Wechselrichter / Batteriespeicher / Solarpanel config */}
+                        {(selectedNode.type === 'Wechselrichter' ||
+                            selectedNode.type === 'Batteriespeicher' ||
+                            selectedNode.type === 'Solarpanel') && (
+                            <EnergyNodeDetailPanel
+                                node={selectedNode}
+                                socket={socket}
+                                theme={theme}
                                 onConfigChange={(key, value) => {
                                     const newTree = updateNodeConfig(tree, selectedNode.id, key, value);
                                     setTree(newTree);

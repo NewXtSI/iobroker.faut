@@ -22,12 +22,16 @@ export type FautNodeType =
     | 'Rolladen'
     | 'Ventilator'
     | 'Lampe'
-    | 'Alexa';
+    | 'Alexa'
+    | 'Wechselrichter'
+    | 'Batteriespeicher'
+    | 'Solarpanel';
 
 export interface FautNodeConfig {
     // Temperatur-specific
     dpTemperatur?: string;
     dpLuftfeuchtigkeit?: string;
+    aussentemperatursensor?: boolean;
     // Helligkeit-specific
     dpLux?: string;
     globalerSensor?: boolean;
@@ -70,6 +74,22 @@ export interface FautNodeConfig {
     // Heizung node
     heizperiodeAktiv?: boolean;
     energiesparmodusAktiv?: boolean;
+    dpOelstand?: string;
+    dpBetriebsart?: string;
+    dpStoerung?: string;
+    dpFehlertext?: string;
+    // Energie node
+    dpStromzaehlerStand?: string;
+    dpStromzaehlerEinspeisestand?: string;
+    dpStromzaehlerVerbrauch?: string;
+    // Wechselrichter
+    dpGesamterzeugung?: string;
+    dpWechselrichterPower?: string;
+    // Batteriespeicher
+    dpSoc?: string;
+    dpBatterieKwh?: string;
+    // Solarpanel
+    dpSolarpanelPower?: string;
 }
 
 export interface FautTreeNode {
