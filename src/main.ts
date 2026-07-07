@@ -89,9 +89,39 @@ class Faut extends utils.Adapter {
 	/**
 	 * Is called when databases are connected and adapter received configuration.
 	 */
+	/** Ensures all native config fields exist (fills in missing flags for existing instances). */
+	private async migrateConfig(): Promise<void> {
+		const defaults: Partial<ioBroker.AdapterConfig> = {
+			dpNachtmodus: '',
+			logShuttercontrol: false,
+			logShuttercontrolExtended: false,
+			logAdmin: false,
+			logAlexa: false,
+			logPresence: false,
+			logClimate: false,
+			logClimateExtended: false,
+			logLight: false,
+			logLightExtended: false,
+			logEnergy: false,
+			logEnergyExtended: false,
+		};
+		const patch: Partial<ioBroker.AdapterConfig> = {};
+		for (const [key, def] of Object.entries(defaults)) {
+			if ((this.config as unknown as Record<string, unknown>)[key] === undefined) {
+				(patch as Record<string, unknown>)[key] = def;
+				(this.config as unknown as Record<string, unknown>)[key] = def;
+			}
+		}
+		if (Object.keys(patch).length > 0) {
+			this.log.info(`Migrating config: adding missing fields: ${Object.keys(patch).join(', ')}`);
+			await this.extendForeignObjectAsync(`system.adapter.${this.namespace}`, { native: patch });
+		}
+	}
+
 	private async onReady(): Promise<void> {
 		this.log.info('Faut adapter started');
 		this.setState('info.connection', { val: true, ack: true });
+		await this.migrateConfig();
 		await this.syncTreeToObjects();
 		await this.setupGlobalStates();
 

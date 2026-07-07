@@ -56,7 +56,19 @@
 	"native": {
 		"aktiviert": false,
 		"steuerungAktiviert": false,
-		"grundstueck": []
+		"grundstueck": [],
+		"dpNachtmodus": "",
+		"logShuttercontrol": false,
+		"logShuttercontrolExtended": false,
+		"logAdmin": false,
+		"logAlexa": false,
+		"logPresence": false,
+		"logClimate": false,
+		"logClimateExtended": false,
+		"logLight": false,
+		"logLightExtended": false,
+		"logEnergy": false,
+		"logEnergyExtended": false
 	},
 	"objects": [],
 	"instanceObjects": []
