@@ -87,14 +87,55 @@ class Faut extends utils.Adapter {
         });
         this.on('ready', this.onReady.bind(this));
         this.on('stateChange', this.onStateChange.bind(this));
+        this.on('message', this.onMessage.bind(this));
         this.on('unload', this.onUnload.bind(this));
     }
     /**
      * Is called when databases are connected and adapter received configuration.
      */
+    /** Ensures all native config fields exist (fills in missing flags for existing instances). */
+    async migrateConfig() {
+        const defaults = {
+            dpNachtmodus: '',
+            logShuttercontrol: false,
+            logShuttercontrolExtended: false,
+            logAdmin: false,
+            logAlexa: false,
+            logPresence: false,
+            logClimate: false,
+            logClimateExtended: false,
+            logLight: false,
+            logLightExtended: false,
+            logEnergy: false,
+            logEnergyExtended: false,
+        };
+        const patch = {};
+        for (const [key, def] of Object.entries(defaults)) {
+            if (this.config[key] === undefined) {
+                patch[key] = def;
+                this.config[key] = def;
+            }
+        }
+        if (Object.keys(patch).length > 0) {
+            this.log.info(`Migrating config: adding missing fields: ${Object.keys(patch).join(', ')}`);
+            await this.extendForeignObjectAsync(`system.adapter.${this.namespace}`, { native: patch });
+        }
+    }
     async onReady() {
         this.log.info('Faut adapter started');
         this.setState('info.connection', { val: true, ack: true });
+        await this.migrateConfig();
+        const flags = [
+            'logShuttercontrol', 'logShuttercontrolExtended',
+            'logAdmin', 'logAlexa', 'logPresence',
+            'logClimate', 'logClimateExtended',
+            'logLight', 'logLightExtended',
+            'logEnergy', 'logEnergyExtended',
+        ];
+        const active = flags.filter(f => !!this.config[f]);
+        const inactive = flags.filter(f => !this.config[f]);
+        this.log.info(`Log flags ON : ${active.length ? active.join(', ') : '(none)'}`);
+        this.log.info(`Log flags OFF: ${inactive.length ? inactive.join(', ') : '(none)'}`);
         await this.syncTreeToObjects();
         await this.setupGlobalStates();
         if (!this.config.aktiviert) {
@@ -409,9 +450,11 @@ class Faut extends utils.Adapter {
             }
             // If in "cooldown" from a previous run but no timer is running → reset to absent
             if (anyActive) {
+                this.logPresence(`${room.relId}: startup \u2192 present (sensor active)`);
                 await this.setStateAsync(`${room.relId}.presence`, { val: 'present', ack: true });
             }
             else {
+                this.logPresence(`${room.relId}: startup \u2192 absent`);
                 await this.setStateAsync(`${room.relId}.presence`, { val: 'absent', ack: true });
             }
         }
@@ -448,6 +491,7 @@ class Faut extends utils.Adapter {
                     clearTimeout(existing);
                     this.cooldownTimers.delete(roomRelId);
                 }
+                this.logPresence(`${roomRelId}: motion detected on ${dpId} → present`);
                 await this.setStateAsync(`${roomRelId}.presence`, { val: 'present', ack: true });
             }
             else {
@@ -470,14 +514,19 @@ class Faut extends utils.Adapter {
                     const existing = this.cooldownTimers.get(roomRelId);
                     if (existing !== undefined)
                         clearTimeout(existing);
+                    this.logPresence(`${roomRelId}: motion cleared on ${dpId} → cooldown (${room.cooldownMs / 1000}s)`);
                     await this.setStateAsync(`${roomRelId}.presence`, { val: 'cooldown', ack: true });
                     const timer = setTimeout(() => {
                         this.cooldownTimers.delete(roomRelId);
+                        this.logPresence(`${roomRelId}: cooldown expired → absent`);
                         this.setStateAsync(`${roomRelId}.presence`, { val: 'absent', ack: true }).catch(e => {
                             this.log.error(`Cooldown expire failed for ${roomRelId}: ${e.message}`);
                         });
                     }, room.cooldownMs);
                     this.cooldownTimers.set(roomRelId, timer);
+                }
+                else {
+                    this.logPresence(`${roomRelId}: motion cleared on ${dpId}, but other sensor still active → staying present`);
                 }
             }
         }
@@ -583,6 +632,76 @@ class Faut extends utils.Adapter {
         if (this.config.logShuttercontrolExtended) {
             this.log.debug(`[shuttercontrol_extended] ${msg}`);
         }
+    }
+    onMessage(obj) {
+        if (obj.command === 'log' && obj.message) {
+            const { flag, text } = obj.message;
+            switch (flag) {
+                case 'admin':
+                    this.logAdmin(text);
+                    break;
+                case 'alexa':
+                    this.logAlexa(text);
+                    break;
+                case 'presence':
+                    this.logPresence(text);
+                    break;
+                case 'climate':
+                    this.logClimate(text);
+                    break;
+                case 'climate_extended':
+                    this.logClimateExtended(text);
+                    break;
+                case 'light':
+                    this.logLight(text);
+                    break;
+                case 'light_extended':
+                    this.logLightExtended(text);
+                    break;
+                case 'energy':
+                    this.logEnergy(text);
+                    break;
+                case 'energy_extended':
+                    this.logEnergyExtended(text);
+                    break;
+            }
+        }
+    }
+    logAdmin(msg) {
+        if (this.config.logAdmin)
+            this.log.debug(`[admin] ${msg}`);
+    }
+    logAlexa(msg) {
+        if (this.config.logAlexa)
+            this.log.debug(`[alexa] ${msg}`);
+    }
+    logPresence(msg) {
+        if (this.config.logPresence)
+            this.log.debug(`[presence] ${msg}`);
+    }
+    logClimate(msg) {
+        if (this.config.logClimate)
+            this.log.debug(`[climate] ${msg}`);
+    }
+    logClimateExtended(msg) {
+        if (this.config.logClimateExtended)
+            this.log.debug(`[climate_extended] ${msg}`);
+    }
+    logLight(msg) {
+        if (this.config.logLight)
+            this.log.debug(`[light] ${msg}`);
+    }
+    logLightExtended(msg) {
+        if (this.config.logLightExtended)
+            this.log.debug(`[light_extended] ${msg}`);
+    }
+    logEnergy(msg) {
+        if (this.config.logEnergy)
+            this.log.debug(`[energy] ${msg}`);
+    }
+    logEnergyExtended(msg) {
+        if (this.config.logEnergyExtended)
+            this.log.debug(`[energy_extended] ${msg}`);
     }
     /**
      * Collects all rooms with shutter control configured and logs the found topology.
