@@ -412,8 +412,10 @@ class Faut extends utils.Adapter {
 			}
 			// If in "cooldown" from a previous run but no timer is running → reset to absent
 			if (anyActive) {
+				this.logPresence(`${room.relId}: startup \u2192 present (sensor active)`);
 				await this.setStateAsync(`${room.relId}.presence`, { val: 'present', ack: true });
 			} else {
+				this.logPresence(`${room.relId}: startup \u2192 absent`);
 				await this.setStateAsync(`${room.relId}.presence`, { val: 'absent',  ack: true });
 			}
 		}
@@ -445,6 +447,7 @@ class Faut extends utils.Adapter {
 				// New motion: cancel cooldown, go to present
 				const existing = this.cooldownTimers.get(roomRelId);
 				if (existing !== undefined) { clearTimeout(existing); this.cooldownTimers.delete(roomRelId); }
+				this.logPresence(`${roomRelId}: motion detected on ${dpId} → present`);
 				await this.setStateAsync(`${roomRelId}.presence`, { val: 'present', ack: true });
 			} else {
 				// Motion cleared: check if another sensor is still active
@@ -461,14 +464,18 @@ class Faut extends utils.Adapter {
 					const existing = this.cooldownTimers.get(roomRelId);
 					if (existing !== undefined) clearTimeout(existing);
 
+					this.logPresence(`${roomRelId}: motion cleared on ${dpId} → cooldown (${room.cooldownMs / 1000}s)`);
 					await this.setStateAsync(`${roomRelId}.presence`, { val: 'cooldown', ack: true });
 					const timer = setTimeout(() => {
 						this.cooldownTimers.delete(roomRelId);
+						this.logPresence(`${roomRelId}: cooldown expired → absent`);
 						this.setStateAsync(`${roomRelId}.presence`, { val: 'absent', ack: true }).catch(e => {
 							this.log.error(`Cooldown expire failed for ${roomRelId}: ${(e as Error).message}`);
 						});
 					}, room.cooldownMs);
 					this.cooldownTimers.set(roomRelId, timer);
+				} else {
+					this.logPresence(`${roomRelId}: motion cleared on ${dpId}, but other sensor still active → staying present`);
 				}
 			}
 		}
