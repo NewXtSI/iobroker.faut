@@ -1477,7 +1477,7 @@ class Faut extends utils.Adapter {
             }
             return;
         }
-        // Night mode turned OFF → open only if currently daytime
+        // Night mode turned OFF → open immediately if daytime; re-schedule if before sunrise
         const now = new Date();
         for (const room of this.shutterRooms.values()) {
             if (this.sunLat === 0 && this.sunLng === 0) {
@@ -1492,8 +1492,13 @@ class Faut extends utils.Adapter {
                 for (const rel of room.rolladenRelIds)
                     await this.applyShutterState(rel, 'open', 'night mode deactivated, daytime');
             }
+            else if (now < rise) {
+                // Night mode ended before sunrise – reschedule so a fresh sunrise timer fires and opens the shutters.
+                this.logShutter(`Room "${this.labelFor(room.relId)}": night mode OFF before sunrise → rescheduling sunrise open`);
+                this.scheduleShutterEvents(room).catch(e => this.log.error(`Re-schedule after night mode off failed: ${e.message}`));
+            }
             else {
-                this.logShutter(`Room "${this.labelFor(room.relId)}": night mode OFF, outside daytime → staying closed`);
+                this.logShutter(`Room "${this.labelFor(room.relId)}": night mode OFF, after sunset → staying closed`);
             }
         }
     }
