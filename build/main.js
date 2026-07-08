@@ -93,6 +93,13 @@ class Faut extends utils.Adapter {
     shutterRoomTempDpToRoomId = new Map();
     /** Maps rolladen own relId → room relId (for resetManual and other lookups). */
     rolladenToRoom = new Map();
+    /** Reverse map: external position DP → rolladen own relId. */
+    posDpToRolladen = new Map();
+    /** Adapter instance IDs whose position writes automatically switch a rolladen to manual mode. */
+    manualTriggerAdapters = new Set([
+        'system.adapter.web.0',
+        'system.adapter.matter.0',
+    ]);
     /** Last seen values of foreign DPs – used to suppress duplicate extended-log entries. */
     dpLastExtValues = new Map();
     /** Maps each node relId to a human-readable label path (e.g. "Gebäude.EG.Arbeitszimmer"). */
@@ -1782,6 +1789,7 @@ class Faut extends utils.Adapter {
                         if (childCfg.dpPosition) {
                             rolladenPosDpIds.push(childCfg.dpPosition);
                             this.rolladenRelIdToPosDp.set(childRelId, childCfg.dpPosition);
+                            this.posDpToRolladen.set(childCfg.dpPosition, childRelId);
                         }
                         this.rolladenPosCfg.set(childRelId, {
                             sunblock: childCfg.sunblockPosition ?? 20,
@@ -2056,6 +2064,14 @@ class Faut extends utils.Adapter {
                 const fromAdapter = state.from ?? 'unknown';
                 if (this.shutterPositionDpIds.has(id)) {
                     this.logShutterExtended(`Position DP changed: ${id} = ${JSON.stringify(state.val)} [from: ${fromAdapter}]`);
+                    // Auto-manual: if the change came from a whitelisted adapter, switch to manual
+                    if (this.manualTriggerAdapters.has(fromAdapter)) {
+                        const rolladenRelId = this.posDpToRolladen.get(id);
+                        if (rolladenRelId) {
+                            this.logShutter(`${this.labelFor(rolladenRelId)}: position changed by ${fromAdapter} → switching to manual`);
+                            this.setStateAsync(`${rolladenRelId}.state`, { val: 'manual', ack: true }).catch(e => this.log.error(`Auto-manual failed for ${rolladenRelId}: ${e.message}`));
+                        }
+                    }
                 }
                 else {
                     this.logShutterExtended(`DP changed: ${id} = ${JSON.stringify(state.val)} [from: ${fromAdapter}]`);
