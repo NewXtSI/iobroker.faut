@@ -91,6 +91,8 @@ class Faut extends utils.Adapter {
     shutterAussenTempDpId = '';
     /** Maps room-temperature foreign DP IDs → room relId (for heatblock evaluation). */
     shutterRoomTempDpToRoomId = new Map();
+    /** Maps rolladen own relId → room relId (for resetManual and other lookups). */
+    rolladenToRoom = new Map();
     /** Last seen values of foreign DPs – used to suppress duplicate extended-log entries. */
     dpLastExtValues = new Map();
     /** Maps each node relId to a human-readable label path (e.g. "Gebäude.EG.Arbeitszimmer"). */
@@ -1496,6 +1498,13 @@ class Faut extends utils.Adapter {
         for (const room of this.shutterRooms.values()) {
             await this.scheduleShutterEvents(room);
         }
+        // ---- Subscribe resetManual states for all Rolladen ----
+        for (const room of this.shutterRooms.values()) {
+            for (const rel of room.rolladenRelIds) {
+                this.rolladenToRoom.set(rel, room.relId);
+                this.subscribeStates(`${rel}.resetManual`);
+            }
+        }
         this.scheduleShutterDailyReset();
     }
     /** Schedules sunrise/sunset timers for one room and applies the correct initial state. */
@@ -1921,6 +1930,7 @@ class Faut extends utils.Adapter {
             specs.push({ id: 'state', name: 'State', dataType: 'string', role: 'text', def: 'open', write: true,
                 states: { open: 'Open', closed: 'Closed', sunblock: 'Sunblock', heatblock: 'Heatblock', manual: 'Manual' },
             });
+            specs.push({ id: 'resetManual', name: 'Reset Manual', dataType: 'boolean', role: 'button.play', def: false, write: true });
             if (cfg.dpPosition)
                 specs.push({ id: 'position', name: 'Position', dataType: 'number', role: 'level.blind', unit: '%', def: 0, write: true });
         }
@@ -2042,7 +2052,14 @@ class Faut extends utils.Adapter {
             const last = this.dpLastExtValues.get(id);
             if (last !== state.val) {
                 this.dpLastExtValues.set(id, state.val);
-                this.logShutterExtended(`DP changed: ${id} = ${JSON.stringify(state.val)}`);
+                // Log source adapter for position changes so manual-mode rules can be built
+                const fromAdapter = state.from ?? 'unknown';
+                if (this.shutterPositionDpIds.has(id)) {
+                    this.logShutterExtended(`Position DP changed: ${id} = ${JSON.stringify(state.val)} [from: ${fromAdapter}]`);
+                }
+                else {
+                    this.logShutterExtended(`DP changed: ${id} = ${JSON.stringify(state.val)} [from: ${fromAdapter}]`);
+                }
             }
         }
         // Night mode: external DP changed → mirror to own state
@@ -2057,6 +2074,28 @@ class Faut extends utils.Adapter {
             this.setForeignStateAsync(this.nightModeDpId, { val: !!state.val, ack: false }).catch(e => {
                 this.log.error(`Night mode write-through failed: ${e.message}`);
             });
+        }
+        // Rolladen: resetManual button → exit manual mode and re-evaluate shutter state
+        if (!state.ack && id.startsWith(`${this.namespace}.`) && id.endsWith('.resetManual') && !!state.val) {
+            const rolladenRelId = id.slice(this.namespace.length + 1).replace(/\.resetManual$/, '');
+            const roomRelId = this.rolladenToRoom.get(rolladenRelId);
+            const room = roomRelId ? this.shutterRooms.get(roomRelId) : undefined;
+            if (room) {
+                this.logShutter(`${this.labelFor(rolladenRelId)}: resetManual → exiting manual mode`);
+                (async () => {
+                    try {
+                        // Clear manual state (temporary; evaluation will overwrite immediately)
+                        await this.setStateAsync(`${rolladenRelId}.state`, { val: 'open', ack: true });
+                        // Acknowledge the button
+                        await this.setStateAsync(`${rolladenRelId}.resetManual`, { val: false, ack: true });
+                        // Re-evaluate → sets correct target (open/closed/sunblock/heatblock)
+                        await this.evaluateShutterRoom(room);
+                    }
+                    catch (e) {
+                        this.log.error(`resetManual failed for ${this.labelFor(rolladenRelId)}: ${e.message}`);
+                    }
+                })();
+            }
         }
         // Night mode: react for shutter control on confirmed state (ack=true, or no ext DP)
         if (id === `${this.namespace}.global.nightMode` && (state.ack || !this.nightModeDpId)) {
