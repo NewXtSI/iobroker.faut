@@ -989,6 +989,12 @@ class Faut extends utils.Adapter {
             await this.updateConsumptionLive(id, currentReading, anchors, now);
             await this.updateConsumptionHistory(id, anchors, currentReading);
         }
+        // Derived tracker: Hausverbrauch kWh = grid + solar − feedin
+        if (this.consumptionConfigs.has('grid') || this.consumptionConfigs.has('solar') || this.consumptionConfigs.has('feedin')) {
+            await this.ensureHausverbrauchObjects(year);
+            await this.updateHausverbrauchLive();
+            await this.updateHausverbrauchHistory(year);
+        }
         this.scheduleConsumptionMidnight();
     }
     /** Handles a source DP value change: updates reading cache and live states. */
@@ -1009,6 +1015,10 @@ class Faut extends utils.Adapter {
             this.updateConsumptionLive(trackerId, newReading, anchors, now).catch(e => this.log.error(`Consumption live update (${trackerId}) failed: ${e.message}`));
             const d = (0, consumptionTracker_1.computeDelta)(anchors.startOfDay, newReading, cc.descending);
             this.logEnergyExtended(`Consumption ${trackerId}: reading=${newReading} ${cc.unit}, today=${d} ${cc.unit}`);
+            // Update derived Hausverbrauch whenever grid / solar / feedin changes
+            if (trackerId === 'grid' || trackerId === 'feedin' || trackerId === 'solar') {
+                this.updateHausverbrauchLive().catch(e => this.log.error(`Hausverbrauch live update failed: ${e.message}`));
+            }
         }
     }
     /** Handles user writing to a _anchors state — parse JSON and apply immediately. */
@@ -1039,6 +1049,10 @@ class Faut extends utils.Adapter {
         await this.setStateAsync(`global.consumption.${trackerId}.cumulativeReading`, { val: reading, ack: true });
         await this.updateConsumptionLive(trackerId, reading, newAnchors, new Date());
         await this.updateConsumptionHistory(trackerId, newAnchors, reading);
+        if (trackerId === 'grid' || trackerId === 'feedin' || trackerId === 'solar') {
+            await this.updateHausverbrauchLive();
+            await this.updateHausverbrauchHistory(newAnchors.year);
+        }
         this.logEnergy(`Consumption ${trackerId}: anchors updated by user write`);
     }
     /** Performs the midnight rollover for all trackers, then reschedules itself. */
@@ -1057,7 +1071,121 @@ class Faut extends utils.Adapter {
             this.logEnergyExtended(`Consumption rollover ${id}: prevDay=${rolled.prevDayConsumed} ${cc.unit}` +
                 `, prevWeek=${rolled.prevWeekConsumed} ${cc.unit}`);
         }
+        // Hausverbrauch: update derived history after all trackers have rolled over
+        if (this.consumptionConfigs.has('grid') || this.consumptionConfigs.has('solar') || this.consumptionConfigs.has('feedin')) {
+            await this.updateHausverbrauchLive();
+            await this.updateHausverbrauchHistory(now.getFullYear());
+        }
         this.scheduleConsumptionMidnight();
+    }
+    /** Creates ioBroker objects for the derived Hausverbrauch kWh tracker. */
+    async ensureHausverbrauchObjects(year) {
+        const base = 'global.consumption.hausverbrauch';
+        const yr = String(year);
+        const numC = (name) => ({
+            name, type: 'number', role: 'value', unit: 'kWh', read: true, write: false, def: 0,
+        });
+        for (const k of [
+            '01_currentDay', '01_previousDay',
+            '02_currentWeek', '02_previousWeek',
+            '03_currentMonth', '03_previousMonth',
+            '05_currentYear', '05_previousYear',
+        ]) {
+            await this.extendObjectAsync(`${base}.currentYear.consumed.${k}`, {
+                type: 'state', common: numC(k.replace(/^\d\d_/, '')), native: {},
+            });
+        }
+        for (const [mm, label] of Object.entries(consumptionTracker_1.MONTH_LABELS)) {
+            await this.extendObjectAsync(`${base}.${yr}.consumed.months.${label}`, {
+                type: 'state', common: numC(label.replace(/^\d\d_/, '')), native: {},
+            });
+            void mm;
+        }
+        for (const q of ['Q1', 'Q2', 'Q3', 'Q4']) {
+            await this.extendObjectAsync(`${base}.${yr}.consumed.quarters.${q}`, {
+                type: 'state', common: numC(q), native: {},
+            });
+        }
+        await this.extendObjectAsync(`${base}.${yr}.consumedCumulative`, {
+            type: 'state', common: numC('Consumed cumulative'), native: {},
+        });
+    }
+    /** Writes all currentYear.consumed.* states for the derived Hausverbrauch tracker. */
+    async updateHausverbrauchLive() {
+        const gA = this.consumptionAnchors.get('grid');
+        const fA = this.consumptionAnchors.get('feedin');
+        const sA = this.consumptionAnchors.get('solar');
+        if (!gA && !fA && !sA)
+            return;
+        const gR = this.consumptionReadings.get('grid') ?? 0;
+        const fR = this.consumptionReadings.get('feedin') ?? 0;
+        const sR = this.consumptionReadings.get('solar') ?? 0;
+        const hv = (g, s, f) => Math.round(Math.max(0, g + s - f) * 1000) / 1000;
+        const day = hv(gA ? (0, consumptionTracker_1.computeDelta)(gA.startOfDay, gR, false) : 0, sA ? (0, consumptionTracker_1.computeDelta)(sA.startOfDay, sR, false) : 0, fA ? (0, consumptionTracker_1.computeDelta)(fA.startOfDay, fR, false) : 0);
+        const week = hv(gA ? (0, consumptionTracker_1.computeDelta)(gA.startOfWeek, gR, false) : 0, sA ? (0, consumptionTracker_1.computeDelta)(sA.startOfWeek, sR, false) : 0, fA ? (0, consumptionTracker_1.computeDelta)(fA.startOfWeek, fR, false) : 0);
+        const month = hv(gA ? (0, consumptionTracker_1.computeDelta)(gA.startOfMonth, gR, false) : 0, sA ? (0, consumptionTracker_1.computeDelta)(sA.startOfMonth, sR, false) : 0, fA ? (0, consumptionTracker_1.computeDelta)(fA.startOfMonth, fR, false) : 0);
+        const yr = hv(gA ? (0, consumptionTracker_1.computeDelta)(gA.startOfYear, gR, false) : 0, sA ? (0, consumptionTracker_1.computeDelta)(sA.startOfYear, sR, false) : 0, fA ? (0, consumptionTracker_1.computeDelta)(fA.startOfYear, fR, false) : 0);
+        const prevDay = hv(gA?.prevDayConsumed ?? 0, sA?.prevDayConsumed ?? 0, fA?.prevDayConsumed ?? 0);
+        const prevWeek = hv(gA?.prevWeekConsumed ?? 0, sA?.prevWeekConsumed ?? 0, fA?.prevWeekConsumed ?? 0);
+        const prevMonth = hv(gA?.prevMonthConsumed ?? 0, sA?.prevMonthConsumed ?? 0, fA?.prevMonthConsumed ?? 0);
+        const prevYear = hv(gA?.prevYearConsumed ?? 0, sA?.prevYearConsumed ?? 0, fA?.prevYearConsumed ?? 0);
+        const base = 'global.consumption.hausverbrauch.currentYear.consumed';
+        await Promise.all([
+            this.setStateAsync(`${base}.01_currentDay`, { val: day, ack: true }),
+            this.setStateAsync(`${base}.01_previousDay`, { val: prevDay, ack: true }),
+            this.setStateAsync(`${base}.02_currentWeek`, { val: week, ack: true }),
+            this.setStateAsync(`${base}.02_previousWeek`, { val: prevWeek, ack: true }),
+            this.setStateAsync(`${base}.03_currentMonth`, { val: month, ack: true }),
+            this.setStateAsync(`${base}.03_previousMonth`, { val: prevMonth, ack: true }),
+            this.setStateAsync(`${base}.05_currentYear`, { val: yr, ack: true }),
+            this.setStateAsync(`${base}.05_previousYear`, { val: prevYear, ack: true }),
+        ]);
+    }
+    /** Writes yearly monthly/quarterly breakdown for the derived Hausverbrauch tracker. */
+    async updateHausverbrauchHistory(year) {
+        const gA = this.consumptionAnchors.get('grid');
+        const fA = this.consumptionAnchors.get('feedin');
+        const sA = this.consumptionAnchors.get('solar');
+        if (!gA && !fA && !sA)
+            return;
+        const gR = this.consumptionReadings.get('grid') ?? 0;
+        const fR = this.consumptionReadings.get('feedin') ?? 0;
+        const sR = this.consumptionReadings.get('solar') ?? 0;
+        // Use any available anchor as reference for current-month index
+        const ref = gA ?? sA ?? fA;
+        const base = `global.consumption.hausverbrauch.${year}`;
+        const quarterConsumed = { 1: 0, 2: 0, 3: 0, 4: 0 };
+        let yearConsumed = 0;
+        for (let m0 = 0; m0 <= 11; m0++) {
+            const mm = (0, consumptionTracker_1.mmOf)(m0 + 1);
+            const label = consumptionTracker_1.MONTH_LABELS[mm];
+            let consumed = 0;
+            if (m0 < ref.month) {
+                // Completed month: sum contributions from each tracker
+                const g = gA?.monthlyConsumed[mm] ?? 0;
+                const s = sA?.monthlyConsumed[mm] ?? 0;
+                const f = fA?.monthlyConsumed[mm] ?? 0;
+                consumed = Math.round(Math.max(0, g + s - f) * 1000) / 1000;
+            }
+            else if (m0 === ref.month) {
+                // Current (live) month
+                const g = gA ? (0, consumptionTracker_1.computeDelta)(gA.startOfMonth, gR, false) : 0;
+                const s = sA ? (0, consumptionTracker_1.computeDelta)(sA.startOfMonth, sR, false) : 0;
+                const f = fA ? (0, consumptionTracker_1.computeDelta)(fA.startOfMonth, fR, false) : 0;
+                consumed = Math.round(Math.max(0, g + s - f) * 1000) / 1000;
+            }
+            await this.setStateAsync(`${base}.consumed.months.${label}`, { val: consumed, ack: true });
+            yearConsumed += consumed;
+            quarterConsumed[(0, consumptionTracker_1.quarterOf)(m0)] += consumed;
+        }
+        for (const q of [1, 2, 3, 4]) {
+            await this.setStateAsync(`${base}.consumed.quarters.Q${q}`, {
+                val: Math.round(quarterConsumed[q] * 1000) / 1000, ack: true,
+            });
+        }
+        await this.setStateAsync(`${base}.consumedCumulative`, {
+            val: Math.round(yearConsumed * 1000) / 1000, ack: true,
+        });
     }
     /** Schedules a one-shot timer that fires 5 seconds past the next local midnight. */
     scheduleConsumptionMidnight() {
