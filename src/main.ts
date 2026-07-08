@@ -1736,8 +1736,20 @@ class Faut extends utils.Adapter {
 		if (this.config.steuerungAktiviert) {
 			const dpId = this.rolladenRelIdToPosDp.get(rolladenRelId);
 			if (dpId) {
-				await this.setForeignStateAsync(dpId, { val: pos, ack: false });
-				this.logShutter(`${this.labelFor(rolladenRelId)}: wrote position=${pos} → ${dpId}`);
+				// Only send if current position deviates by more than 5% from target
+				let shouldWrite = true;
+				try {
+					const curPos = await this.getForeignStateAsync(dpId);
+					if (typeof curPos?.val === 'number' && Math.abs(curPos.val - pos) <= 5) {
+						this.logShutter(`${this.labelFor(rolladenRelId)}: position already at ${curPos.val}% (target=${pos}%) – skipping write`);
+						shouldWrite = false;
+					}
+				} catch { /* cannot read current position – write anyway */ }
+
+				if (shouldWrite) {
+					await this.setForeignStateAsync(dpId, { val: pos, ack: false });
+					this.logShutter(`${this.labelFor(rolladenRelId)}: wrote position=${pos} → ${dpId}`);
+				}
 			}
 		} else {
 			this.logShutter(`${this.labelFor(rolladenRelId)}: steuerungAktiviert=false → would set position=${pos} [${reason}]`);
