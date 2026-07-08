@@ -196,6 +196,18 @@ export default function RaumDetailPanel({ node, onConfigChange }: Props): React.
                     </Stack>
                 )}
             </Box>
+            <Box>
+                <FormControlLabel
+                    control={
+                        <Checkbox
+                            size="small"
+                            checked={cfg.lichtsteuerung ?? false}
+                            onChange={e => onConfigChange('lichtsteuerung', e.target.checked)}
+                        />
+                    }
+                    label={I18n.t('Light control')}
+                />
+            </Box>
         </Stack>
     );
 }

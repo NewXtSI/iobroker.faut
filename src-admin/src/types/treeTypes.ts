@@ -124,6 +124,7 @@ export interface FautNodeConfig {
     dunkelheitserkennung?: boolean;
     dunkelgrenze?: number;
     globalenSensorBenutzen?: boolean;
+    lichtsteuerung?: boolean;
     // Raum shutter control
     rolladensteuerung?: boolean;
     himmelsrichtung?: number;

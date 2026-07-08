@@ -50,6 +50,8 @@ class Faut extends utils.Adapter {
     dpToRoomsLux = new Map();
     /** Runtime entries for rooms with active presence/dark logic. */
     roomEntries = new Map();
+    /** Room relIds with lichtsteuerung=true (for lightOn trigger in onStateChange). */
+    lightRoomIds = new Set();
     /** Active cooldown timers, keyed by room relId. */
     cooldownTimers = new Map();
     /** Maps a battery DP ID to the own lowBat state relId. */
@@ -432,7 +434,7 @@ class Faut extends utils.Adapter {
         for (const node of nodes) {
             const relId = prefix ? `${prefix}.${node.id}` : node.id;
             const cfg = node.config ?? {};
-            if (node.type === 'Raum' && (cfg.bewegungserkennung || cfg.dunkelheitserkennung)) {
+            if (node.type === 'Raum' && (cfg.bewegungserkennung || cfg.dunkelheitserkennung || cfg.lichtsteuerung)) {
                 const motionDpIds = [];
                 const luxDpIds = [];
                 if (cfg.bewegungserkennung) {
@@ -451,10 +453,13 @@ class Faut extends utils.Adapter {
                         relId,
                         cooldownMs: (cfg.bewegungsCooldown ?? 3) * 60_000,
                         dunkelgrenze: cfg.dunkelgrenze ?? 150,
+                        lichtsteuerung: cfg.lichtsteuerung ?? false,
                         motionDpIds,
                         luxDpIds,
                     };
                     this.roomEntries.set(relId, entry);
+                    if (cfg.lichtsteuerung)
+                        this.lightRoomIds.add(relId);
                     for (const dpId of motionDpIds) {
                         const arr = this.dpToRoomsMotion.get(dpId) ?? [];
                         arr.push(relId);
@@ -573,6 +578,8 @@ class Faut extends utils.Adapter {
                 });
             }
         }
+        // Light control: set initial lightOn state
+        await this.updateLightOn(room.relId);
     }
     /** Handles a motion DP change for all rooms that monitor it. */
     async handleMotionChange(dpId, isMotion) {
@@ -646,6 +653,27 @@ class Faut extends utils.Adapter {
         if (lux > threshold + h)
             return 'bright';
         return 'twilight';
+    }
+    /**
+     * Recomputes and writes `lightOn` for a room with lichtsteuerung=true.
+     * lightOn = (presence is 'present' or 'cooldown') AND (dark is 'dark' or 'twilight').
+     */
+    async updateLightOn(roomRelId) {
+        if (!this.lightRoomIds.has(roomRelId))
+            return;
+        try {
+            const presenceSt = await this.getStateAsync(`${roomRelId}.presence`);
+            const darkSt = await this.getStateAsync(`${roomRelId}.dark`);
+            const presence = typeof presenceSt?.val === 'string' ? presenceSt.val : 'absent';
+            const dark = typeof darkSt?.val === 'string' ? darkSt.val : 'bright';
+            const lightOn = (presence === 'present' || presence === 'cooldown') &&
+                (dark === 'dark' || dark === 'twilight');
+            await this.setStateAsync(`${roomRelId}.lightOn`, { val: lightOn, ack: true });
+            this.log.debug(`Light: ${this.labelFor(roomRelId)}: lightOn=${lightOn} (presence=${presence}, dark=${dark})`);
+        }
+        catch (e) {
+            this.log.error(`updateLightOn failed for ${this.labelFor(roomRelId)}: ${e.message}`);
+        }
     }
     // ---- sun (Sonne) ----
     /** Collects all Sonne node relIds from the tree. */
@@ -1955,6 +1983,9 @@ class Faut extends utils.Adapter {
                     states: { dark: 'Dark', twilight: 'Twilight', bright: 'Bright' },
                 });
             }
+            if (cfg.lichtsteuerung) {
+                specs.push({ id: 'lightOn', name: 'Light On', dataType: 'boolean', role: 'switch.light', def: false });
+            }
             if (cfg.klimasteuerung) {
                 specs.push({ id: 'climate.setpoint', name: 'Climate Setpoint', dataType: 'number', role: 'value.temperature', unit: '\u00b0C', def: cfg.solltemperatur ?? 20 });
                 specs.push({
@@ -2187,6 +2218,14 @@ class Faut extends utils.Adapter {
                 this.updateClimateSetpoint(room).catch(e => {
                     this.log.error(`Climate presence update failed: ${e.message}`);
                 });
+            }
+        }
+        // Light control: presence or dark changed → recompute lightOn
+        if (state.ack && id.startsWith(`${this.namespace}.`) &&
+            (id.endsWith('.presence') || id.endsWith('.dark'))) {
+            const roomRelId = id.slice(this.namespace.length + 1).replace(/\.(presence|dark)$/, '');
+            if (this.lightRoomIds.has(roomRelId)) {
+                this.updateLightOn(roomRelId).catch(e => this.log.error(`lightOn update failed for ${this.labelFor(roomRelId)}: ${e.message}`));
             }
         }
     }
