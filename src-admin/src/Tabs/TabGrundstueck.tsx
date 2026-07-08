@@ -58,6 +58,7 @@ import RaumDetailPanel from '../components/RaumDetailPanel';
 import RolladenDetailPanel from '../components/RolladenDetailPanel';
 import PersonDetailPanel from '../components/PersonDetailPanel';
 import AlexaDetailPanel from '../components/AlexaDetailPanel';
+import LampeDetailPanel from '../components/LampeDetailPanel';
 import HeizungDetailPanel from '../components/HeizungDetailPanel';
 import EnergieDetailPanel from '../components/EnergieDetailPanel';
 import EnergyNodeDetailPanel from '../components/EnergyNodeDetailPanel';
@@ -163,13 +164,24 @@ function updateNodeConfig(
     nodes: FautTreeNode[],
     id: string,
     key: keyof FautNodeConfig,
-    value: string | boolean | number,
+    value: unknown,
 ): FautTreeNode[] {
     return nodes.map(node => {
-        if (node.id === id) return { ...node, config: { ...(node.config ?? {}), [key]: value } };
+        if (node.id === id) return { ...node, config: { ...(node.config ?? {}), [key]: value as any } };
         if (node.children) return { ...node, children: updateNodeConfig(node.children, id, key, value) };
         return node;
     });
+}
+
+function findParentNode(nodes: FautTreeNode[], childId: string): FautTreeNode | null {
+    for (const node of nodes) {
+        if (node.children?.some(c => c.id === childId)) return node;
+        if (node.children) {
+            const found = findParentNode(node.children, childId);
+            if (found) return found;
+        }
+    }
+    return null;
 }
 
 /** Clears globalerSensor on all Helligkeit nodes except the one with exceptId. */
@@ -476,6 +488,28 @@ export default function TabGrundstueck({ native, socket, theme, onChange, instan
                                 instance={instance}
                                 onConfigChange={(key, value) => {
                                     const newTree = updateNodeConfig(tree, selectedNode.id, key, value);
+                                    setTree(newTree);
+                                    onChange('grundstueck', newTree);
+                                }}
+                            />
+                        )}
+
+                        {/* Lampe actor config */}
+                        {selectedNode.type === 'Lampe' && (
+                            <LampeDetailPanel
+                                node={selectedNode}
+                                parentRoom={findParentNode(tree, selectedNode.id)}
+                                socket={socket}
+                                theme={theme}
+                                onConfigChange={(key, value) => {
+                                    const newTree = updateNodeConfig(tree, selectedNode.id, key, value);
+                                    setTree(newTree);
+                                    onChange('grundstueck', newTree);
+                                }}
+                                onRoomConfigChange={(key, value) => {
+                                    const parent = findParentNode(tree, selectedNode.id);
+                                    if (!parent) return;
+                                    const newTree = updateNodeConfig(tree, parent.id, key, value);
                                     setTree(newTree);
                                     onChange('grundstueck', newTree);
                                 }}

@@ -1,15 +1,21 @@
-import React from 'react';
-import { Box, Checkbox, Divider, FormControlLabel, Stack, TextField, Typography } from '@mui/material';
+import React, { useState } from 'react';
+import {
+    Box, Button, Checkbox, Dialog, DialogActions, DialogContent, DialogTitle,
+    Divider, FormControlLabel, IconButton, List, ListItem, ListItemText,
+    Stack, TextField, Typography,
+} from '@mui/material';
+import DeleteIcon from '@mui/icons-material/Delete';
 import { I18n } from '@iobroker/adapter-react-v5';
 import { type FautNodeConfig, type FautTreeNode } from '../types/treeTypes';
 
 interface Props {
     node: FautTreeNode;
-    onConfigChange: (key: keyof FautNodeConfig, value: string | boolean | number) => void;
+    onConfigChange: (key: keyof FautNodeConfig, value: unknown) => void;
 }
 
 export default function RaumDetailPanel({ node, onConfigChange }: Props): React.JSX.Element {
     const cfg = node.config ?? {};
+    const [confirmDeleteScene, setConfirmDeleteScene] = useState<string | null>(null);
 
     return (
         <Stack spacing={2} sx={{ mt: 2 }}>
@@ -207,7 +213,70 @@ export default function RaumDetailPanel({ node, onConfigChange }: Props): React.
                     }
                     label={I18n.t('Light control')}
                 />
+                {cfg.lichtsteuerung && (
+                    <Box sx={{ mt: 1, ml: 4 }}>
+                        <Typography variant="caption" color="text.secondary" display="block" gutterBottom>
+                            {I18n.t('Custom scenes')}
+                        </Typography>
+                        {(cfg.lampeSzenen ?? []).length === 0 ? (
+                            <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.8rem' }}>
+                                {I18n.t('No custom scenes')}
+                            </Typography>
+                        ) : (
+                            <List dense disablePadding>
+                                {(cfg.lampeSzenen as string[]).map(scene => (
+                                    <ListItem
+                                        key={scene}
+                                        disablePadding
+                                        secondaryAction={
+                                            <IconButton
+                                                edge="end"
+                                                size="small"
+                                                onClick={() => setConfirmDeleteScene(scene)}
+                                                title={I18n.t('Delete scene')}
+                                            >
+                                                <DeleteIcon fontSize="small" />
+                                            </IconButton>
+                                        }
+                                    >
+                                        <ListItemText
+                                            primary={scene}
+                                            primaryTypographyProps={{ fontSize: '0.85rem' }}
+                                        />
+                                    </ListItem>
+                                ))}
+                            </List>
+                        )}
+                    </Box>
+                )}
             </Box>
+
+            {/* Delete scene confirmation dialog */}
+            <Dialog open={confirmDeleteScene !== null} onClose={() => setConfirmDeleteScene(null)}>
+                <DialogTitle>{I18n.t('Delete scene')}</DialogTitle>
+                <DialogContent>
+                    <Typography>
+                        {`${I18n.t('Delete scene confirm')} „${confirmDeleteScene}"?`}
+                    </Typography>
+                </DialogContent>
+                <DialogActions>
+                    <Button onClick={() => setConfirmDeleteScene(null)}>{I18n.t('Cancel')}</Button>
+                    <Button
+                        color="error"
+                        variant="contained"
+                        onClick={() => {
+                            if (confirmDeleteScene) {
+                                const updated = ((cfg.lampeSzenen as string[] | undefined) ?? [])
+                                    .filter(s => s !== confirmDeleteScene);
+                                onConfigChange('lampeSzenen', updated);
+                            }
+                            setConfirmDeleteScene(null);
+                        }}
+                    >
+                        {I18n.t('Delete')}
+                    </Button>
+                </DialogActions>
+            </Dialog>
         </Stack>
     );
 }

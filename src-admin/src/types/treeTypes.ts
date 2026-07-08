@@ -94,6 +94,29 @@ export const ALLOWED_CHILDREN: Record<'root' | FautNodeType, FautNodeType[]> = {
     Solarpanel:     [],
 };
 
+// ---- Lampe scene types ----
+
+export interface LampeSceneAction {
+    setSchalter?:  boolean;
+    schalterWert?: boolean;
+    setDimmer?:    boolean;
+    dimmerWert?:   number;
+    setCt?:        boolean;
+    ctWert?:       number;
+    setColorHex?:  boolean;
+    colorHexWert?: string;
+    setModus?:     boolean;
+    modusWert?:    number;
+    setSzene?:     boolean;
+    szeneWert?:    number;
+}
+
+export interface LampeSceneConfig {
+    scene:    string;
+    lightOn:  LampeSceneAction;
+    lightOff: LampeSceneAction;
+}
+
 // ---- Node config ----
 
 export interface FautNodeConfig {
@@ -160,6 +183,21 @@ export interface FautNodeConfig {
     dpBatterieKwh?: string;
     // Solarpanel
     dpSolarpanelPower?: string;
+    // Room Lampe scene management
+    lampeSzenen?: string[];
+    // Lampe actor
+    lampeAktiviert?:     boolean;
+    lampeSceneConfigs?:  LampeSceneConfig[];
+    dpLampeSchalter?:    string;
+    dpLampeDimmer?:      string;
+    dpLampeCt?:          string;
+    dpLampeColorHex?:    string;
+    dpLampeModus?:       string;
+    lampeModeWertWeiss?: number;
+    lampeModeWertFarbe?: number;
+    dpLampeSzene?:       string;
+    lampeUnreach?:       boolean;
+    dpLampeUnreach?:     string;
 }
 
 // ---- Tree node ----
