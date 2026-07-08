@@ -54,6 +54,8 @@ interface ShutterRoomEntry {
 	untergangOffset:    number;
 	blendschutz:        boolean;
 	hitzeschutz:        boolean;
+	/** Base target temperature for heat differential (Wunschtemperatur, without night/away offset). */
+	solltemperatur:     number;
 	/** Own state relIds of Rolladen in this room. */
 	rolladenRelIds:     string[];
 	/** External position DP IDs of Rolladen in this room. */
@@ -104,6 +106,16 @@ class Faut extends utils.Adapter {
 	private readonly rolladenPosCfg         = new Map<string, { sunblock: number; heatblock: number; aktiviert: boolean }>();
 	/** Daily reschedule timer for shutter sunrise/sunset events. */
 	private shutterDailyTimer: ReturnType<typeof setTimeout> | null = null;
+	/** Current sun azimuth (0=N, 90=E, 180=S, 270=W) – updated every 5 min by updateSunStates(). */
+	private currentSunAzimuth    = 0;
+	/** Current outside temperature (°C) from aussentemperatursensor – null if unavailable. */
+	private currentOutsideTemp:  number | null = null;
+	/** Current global lux value used for shutter decisions – null if unavailable. */
+	private currentShutterLux:  number | null = null;
+	/** Foreign DP ID of the global lux sensor subscribed for shutter control. */
+	private shutterGlobalLuxDpId  = '';
+	/** Foreign DP ID of the outside temperature sensor for shutter control. */
+	private shutterAussenTempDpId = '';
 	/** Last seen values of foreign DPs – used to suppress duplicate extended-log entries. */
 	private readonly dpLastExtValues = new Map<string, unknown>();
 	/** Maps each node relId to a human-readable label path (e.g. "Gebäude.EG.Arbeitszimmer"). */
@@ -519,6 +531,21 @@ class Faut extends utils.Adapter {
 		return null;
 	}
 
+	/** Returns the dpTemperatur of the first Temperatur node with aussentemperatursensor=true, or null. */
+	private findAussentemperaturDp(nodes: FautTreeNode[]): string | null {
+		for (const node of nodes) {
+			if (node.type === 'Temperatur') {
+				const cfg = (node.config as FautNodeConfig | undefined) ?? {};
+				if (cfg.aussentemperatursensor && cfg.dpTemperatur) return cfg.dpTemperatur;
+			}
+			if (node.children?.length) {
+				const found = this.findAussentemperaturDp(node.children);
+				if (found) return found;
+			}
+		}
+		return null;
+	}
+
 	/** Reads current sensor values and sets initial presence / dark states for a room. */
 	private async initRoomStates(room: RoomEntry): Promise<void> {
 		// Presence: check if any motion sensor is currently active
@@ -690,11 +717,19 @@ class Faut extends utils.Adapter {
 		const elevation   = Math.round(pos.altitude * (180 / Math.PI) * 100) / 100;
 		const azimuth     = Math.round(((pos.azimuth * (180 / Math.PI)) + 180) * 100) / 100;
 
+		// Cache azimuth for shutter direction check
+		this.currentSunAzimuth = azimuth;
+
 		for (const relId of this.sunNodeRelIds) {
 			await this.setStateAsync(`${relId}.sunrise`,   { val: sunriseStr, ack: true });
 			await this.setStateAsync(`${relId}.sunset`,    { val: sunsetStr,  ack: true });
 			await this.setStateAsync(`${relId}.elevation`, { val: elevation,  ack: true });
 			await this.setStateAsync(`${relId}.azimuth`,   { val: azimuth,    ack: true });
+		}
+
+		// Re-evaluate shutter state based on updated sun position (every 5 min during daytime)
+		if (this.shutterRooms.size > 0) {
+			this.evaluateAllShutterRooms();
 		}
 	}
 
@@ -1499,8 +1534,6 @@ class Faut extends utils.Adapter {
 			? `Sun node(s): ${this.sunNodeRelIds.map(r => this.labelFor(r)).join(', ')}`
 			: 'No sun node found – sun-based control unavailable.');
 
-		const globalLuxDpId = this.findGlobalLuxDp(tree);
-		this.logShutter(globalLuxDpId ? `Global lux DP: ${globalLuxDpId}` : 'No global lux sensor.');
 		this.logShutter(this.nightModeDpId ? `Night mode DP: ${this.nightModeDpId}` : 'Night mode DP not configured.');
 
 		// Ensure geo position is loaded (may have been skipped if no Sonne node)
@@ -1509,6 +1542,34 @@ class Faut extends utils.Adapter {
 		if (this.sunLat === 0 && this.sunLng === 0) {
 			this.logShutter('No geo position – time-based shutter control disabled.');
 			return;
+		}
+
+		// ---- Subscribe global lux sensor for shutter logic ----
+		const globalLuxDpId = this.findGlobalLuxDp(tree);
+		if (globalLuxDpId) {
+			this.shutterGlobalLuxDpId = globalLuxDpId;
+			this.subscribeForeignStates(globalLuxDpId); // idempotent if already subscribed by room logic
+			try {
+				const s = await this.getForeignStateAsync(globalLuxDpId);
+				if (typeof s?.val === 'number') this.currentShutterLux = s.val;
+			} catch { /* ignore */ }
+			this.logShutter(`Lux DP: ${globalLuxDpId} (current: ${this.currentShutterLux ?? 'n/a'} lx)`);
+		} else {
+			this.logShutter('No global lux sensor – lux-based shutter control unavailable.');
+		}
+
+		// ---- Subscribe outside temperature sensor for heat-protection logic ----
+		const aussenTempDpId = this.findAussentemperaturDp(tree);
+		if (aussenTempDpId) {
+			this.shutterAussenTempDpId = aussenTempDpId;
+			this.subscribeForeignStates(aussenTempDpId);
+			try {
+				const s = await this.getForeignStateAsync(aussenTempDpId);
+				if (typeof s?.val === 'number') this.currentOutsideTemp = s.val;
+			} catch { /* ignore */ }
+			this.logShutter(`Outside temp DP: ${aussenTempDpId} (current: ${this.currentOutsideTemp ?? 'n/a'}°C)`);
+		} else {
+			this.logShutter('No outside temp sensor – heat-based shutter control unavailable.');
 		}
 
 		// Schedule sunrise/sunset timers and apply initial state
@@ -1543,8 +1604,8 @@ class Faut extends utils.Adapter {
 			for (const rel of room.rolladenRelIds)
 				await this.applyShutterState(rel, 'closed', 'startup: past sunset');
 		} else if (msToSunrise <= 0 && !isNightMode) {
-			for (const rel of room.rolladenRelIds)
-				await this.applyShutterState(rel, 'open', 'startup: daytime, no night mode');
+			// Daytime without night mode: run full evaluation (lux + sun + temperature)
+			await this.evaluateShutterRoom(room);
 		} else {
 			for (const rel of room.rolladenRelIds)
 				await this.applyShutterState(rel, 'closed', 'startup: before sunrise or night mode active');
@@ -1561,18 +1622,11 @@ class Faut extends utils.Adapter {
 		}
 	}
 
-	/** Fires at sunrise (+ offset): opens shutters if night mode is off. */
+	/** Fires at sunrise (+ offset): evaluates the full shutter state machine. */
 	private triggerShutterSunrise(room: ShutterRoomEntry): void {
-		this.getStateAsync('global.nightMode').then(nm => {
-			if (nm?.val) {
-				this.logShutter(`Room "${this.labelFor(room.relId)}": sunrise – night mode active, staying closed`);
-				return;
-			}
-			this.logShutter(`Room "${this.labelFor(room.relId)}": sunrise → opening shutters`);
-			for (const rel of room.rolladenRelIds)
-				this.applyShutterState(rel, 'open', 'sunrise').catch(e =>
-					this.log.error(`Shutter sunrise error: ${(e as Error).message}`));
-		}).catch(e => this.log.error(`Night mode read error: ${(e as Error).message}`));
+		this.logShutter(`Room "${this.labelFor(room.relId)}": sunrise → evaluating shutter state`);
+		this.evaluateShutterRoom(room).catch(e =>
+			this.log.error(`Shutter sunrise eval failed for "${this.labelFor(room.relId)}": ${(e as Error).message}`));
 	}
 
 	/** Fires at sunset (+ offset): closes all shutters. */
@@ -1666,6 +1720,104 @@ class Faut extends utils.Adapter {
 		}
 	}
 
+	// ---- Lux / temperature / direction-based shutter evaluation ----
+
+	/**
+	 * Returns true if the current sun azimuth is within ±30° of the room's window direction.
+	 * azimuth: 0=N, 90=E, 180=S, 270=W (same convention as suncalc2 after +180 correction).
+	 */
+	private isSunInDirection(himmelsrichtung: number): boolean {
+		const diff = ((this.currentSunAzimuth - himmelsrichtung + 360) % 360);
+		return diff <= 30 || diff >= 330; // within ±30°
+	}
+
+	/**
+	 * Evaluates the full shutter state machine for one room according to the logic table:
+	 *
+	 *  Nachtmodus=true              → no change (shutters were closed when NM activated)
+	 *  !isDay                       → closed
+	 *  !manual, !heatblock, lux<10k → open
+	 *  !manual, lux>30k, hot, hitzeschutz          → heatblock  (priority over sunblock)
+	 *  !manual, !heatblock, lux>30k, sunDir, blend → sunblock
+	 *  !manual, !heatblock, lux<20k, !sunDir       → open
+	 *  heatblock, !hot, sunDir, blend              → sunblock
+	 *  heatblock, !hot, !sunDir                    → open
+	 */
+	private async evaluateShutterRoom(room: ShutterRoomEntry): Promise<void> {
+		const isNightMode = !!(await this.getStateAsync('global.nightMode'))?.val;
+		if (isNightMode) return; // night mode handler already closed shutters
+
+		const now   = new Date();
+		const times = SunCalc.getTimes(now, this.sunLat, this.sunLng);
+		const rise  = new Date(times.sunrise.getTime() + room.aufgangOffset   * 60_000);
+		const set   = new Date(times.sunset.getTime()  + room.untergangOffset * 60_000);
+		const isDay = now >= rise && now < set;
+
+		if (!isDay) {
+			for (const rel of room.rolladenRelIds)
+				await this.applyShutterState(rel, 'closed', 'eval: not daytime');
+			return;
+		}
+
+		const lux      = this.currentShutterLux;
+		const temp     = this.currentOutsideTemp;
+		const sunInDir = this.isSunInDirection(room.himmelsrichtung);
+		const tempDiff = temp !== null ? temp - room.solltemperatur : null;
+		const isHot    = tempDiff !== null && tempDiff > 6;
+
+		for (const rel of room.rolladenRelIds) {
+			let curState: string;
+			try {
+				const st = await this.getStateAsync(`${rel}.state`);
+				curState = (typeof st?.val === 'string' ? st.val : null) ?? 'closed';
+			} catch { curState = 'closed'; }
+
+			if (curState === 'manual') continue;
+
+			let target: string | null = null;
+
+			if (curState !== 'heatblock') {
+				// Rows 3–6: normal operation (not in heatblock)
+				if (lux !== null && lux < 10_000) {
+					target = 'open';                                                     // Row 3: low light → open
+				} else if (lux !== null && lux > 30_000 && isHot && room.hitzeschutz) {
+					target = 'heatblock';                                                // Row 6: hot+bright → heatblock
+				} else if (lux !== null && lux > 30_000 && sunInDir && room.blendschutz) {
+					target = 'sunblock';                                                 // Row 4: bright+sun in direction → sunblock
+				} else if (lux !== null && lux < 20_000 && !sunInDir) {
+					target = 'open';                                                     // Row 5: moderate light, sun not in direction → open
+				}
+				// else: hysteresis dead-zone → no change
+			} else {
+				// Rows 7–8: currently in heatblock – check if temperature dropped
+				if (!isHot) {
+					if (sunInDir && room.blendschutz) {
+						target = 'sunblock'; // Row 8: still sun in direction → downgrade to sunblock
+					} else {
+						target = 'open';     // Row 7: sun not in direction → fully open
+					}
+				}
+				// else: still hot → stay in heatblock
+			}
+
+			if (target !== null) {
+				const reason =
+					`eval: lux=${lux ?? '?'} sun=${Math.round(this.currentSunAzimuth)}° ` +
+					`dir=${room.himmelsrichtung}°(${sunInDir ? 'in' : 'out'}) ` +
+					`Δtemp=${tempDiff !== null ? tempDiff.toFixed(1) : '?'}°`;
+				await this.applyShutterState(rel, target, reason);
+			}
+		}
+	}
+
+	/** Calls evaluateShutterRoom for every configured shutter room. */
+	private evaluateAllShutterRooms(): void {
+		for (const room of this.shutterRooms.values()) {
+			this.evaluateShutterRoom(room).catch(e =>
+				this.log.error(`Shutter eval failed for "${this.labelFor(room.relId)}": ${(e as Error).message}`));
+		}
+	}
+
 	/** Schedules a daily timer to reschedule all shutter events at midnight + 1 min. */
 	private scheduleShutterDailyReset(): void {
 		const now = new Date();
@@ -1714,6 +1866,7 @@ class Faut extends utils.Adapter {
 					untergangOffset:  cfg.rolladenUntergangOffset  ?? 0,
 					blendschutz:      cfg.blendschutz              ?? false,
 					hitzeschutz:      cfg.hitzeschutz              ?? false,
+					solltemperatur:   cfg.solltemperatur           ?? 20,
 					rolladenRelIds,
 					rolladenPosDpIds,
 					sunriseTimer: null,
@@ -2009,6 +2162,18 @@ class Faut extends utils.Adapter {
 					this.log.error(`Climate night mode update failed: ${(e as Error).message}`);
 				});
 			}
+		}
+
+		// Shutter: global lux changed → update cache and re-evaluate all shutter rooms
+		if (this.shutterGlobalLuxDpId && id === this.shutterGlobalLuxDpId && typeof state.val === 'number') {
+			this.currentShutterLux = state.val;
+			if (this.shutterRooms.size > 0) this.evaluateAllShutterRooms();
+		}
+
+		// Shutter: outside temperature changed → update cache and re-evaluate all shutter rooms
+		if (this.shutterAussenTempDpId && id === this.shutterAussenTempDpId && typeof state.val === 'number') {
+			this.currentOutsideTemp = state.val;
+			if (this.shutterRooms.size > 0) this.evaluateAllShutterRooms();
 		}
 
 		// Consumption tracking: source DP changed (foreign state)
