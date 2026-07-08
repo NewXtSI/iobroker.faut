@@ -89,6 +89,8 @@ class Faut extends utils.Adapter {
     shutterGlobalLuxDpId = '';
     /** Foreign DP ID of the outside temperature sensor for shutter control. */
     shutterAussenTempDpId = '';
+    /** Maps room-temperature foreign DP IDs → room relId (for heatblock evaluation). */
+    shutterRoomTempDpToRoomId = new Map();
     /** Last seen values of foreign DPs – used to suppress duplicate extended-log entries. */
     dpLastExtValues = new Map();
     /** Maps each node relId to a human-readable label path (e.g. "Gebäude.EG.Arbeitszimmer"). */
@@ -484,6 +486,20 @@ class Faut extends utils.Adapter {
                 const found = this.findGlobalLuxDp(node.children);
                 if (found)
                     return found;
+            }
+        }
+        return null;
+    }
+    /**
+     * Returns the dpTemperatur of the first interior Temperatur node in a room's direct children
+     * (i.e. not marked as aussentemperatursensor).
+     */
+    findRoomTempDp(children) {
+        for (const child of children) {
+            if (child.type === 'Temperatur') {
+                const cfg = child.config ?? {};
+                if (!cfg.aussentemperatursensor && cfg.dpTemperatur)
+                    return cfg.dpTemperatur;
             }
         }
         return null;
@@ -1461,6 +1477,21 @@ class Faut extends utils.Adapter {
         else {
             this.logShutter('No outside temp sensor – heat-based shutter control unavailable.');
         }
+        // ---- Subscribe room temperature sensors (for heatblock room-temp check) ----
+        for (const room of this.shutterRooms.values()) {
+            if (!room.roomTempDpId)
+                continue;
+            this.shutterRoomTempDpToRoomId.set(room.roomTempDpId, room.relId);
+            this.subscribeForeignStates(room.roomTempDpId);
+            try {
+                const s = await this.getForeignStateAsync(room.roomTempDpId);
+                if (typeof s?.val === 'number')
+                    room.currentRoomTemp = s.val;
+            }
+            catch { /* ignore */ }
+            this.logShutter(`Room "${this.labelFor(room.relId)}": room temp DP: ${room.roomTempDpId} ` +
+                `(current: ${room.currentRoomTemp ?? 'n/a'}°C)`);
+        }
         // Schedule sunrise/sunset timers and apply initial state
         for (const room of this.shutterRooms.values()) {
             await this.scheduleShutterEvents(room);
@@ -1641,7 +1672,11 @@ class Faut extends utils.Adapter {
         const temp = this.currentOutsideTemp;
         const sunInDir = this.isSunInDirection(room.himmelsrichtung);
         const tempDiff = temp !== null ? temp - room.solltemperatur : null;
-        const isHot = tempDiff !== null && tempDiff > 6;
+        const isOutsideHot = tempDiff !== null && tempDiff > 6;
+        // Room sensor must also be > Wunschtemp+3° (if sensor configured); if no sensor, only outside decides
+        const roomTempDiff = room.currentRoomTemp !== null ? room.currentRoomTemp - room.solltemperatur : null;
+        const isRoomHot = room.roomTempDpId === null || (roomTempDiff !== null && roomTempDiff > 3);
+        const isHot = isOutsideHot && isRoomHot;
         for (const rel of room.rolladenRelIds) {
             let curState;
             try {
@@ -1685,7 +1720,8 @@ class Faut extends utils.Adapter {
             if (target !== null) {
                 const reason = `eval: lux=${lux ?? '?'} sun=${Math.round(this.currentSunAzimuth)}° ` +
                     `dir=${room.himmelsrichtung}°(${sunInDir ? 'in' : 'out'}) ` +
-                    `Δtemp=${tempDiff !== null ? tempDiff.toFixed(1) : '?'}°`;
+                    `Δout=${tempDiff !== null ? tempDiff.toFixed(1) : '?'}° ` +
+                    `Δroom=${roomTempDiff !== null ? roomTempDiff.toFixed(1) : 'n/a'}°`;
                 await this.applyShutterState(rel, target, reason);
             }
         }
@@ -1741,6 +1777,8 @@ class Faut extends utils.Adapter {
                     blendschutz: cfg.blendschutz ?? false,
                     hitzeschutz: cfg.hitzeschutz ?? false,
                     solltemperatur: cfg.solltemperatur ?? 20,
+                    roomTempDpId: this.findRoomTempDp(node.children ?? []),
+                    currentRoomTemp: null,
                     rolladenRelIds,
                     rolladenPosDpIds,
                     sunriseTimer: null,
@@ -2031,6 +2069,15 @@ class Faut extends utils.Adapter {
             this.currentOutsideTemp = state.val;
             if (this.shutterRooms.size > 0)
                 this.evaluateAllShutterRooms();
+        }
+        // Shutter: room temperature changed → update cache and re-evaluate that room
+        if (this.shutterRoomTempDpToRoomId.has(id) && typeof state.val === 'number') {
+            const roomRelId = this.shutterRoomTempDpToRoomId.get(id);
+            const room = this.shutterRooms.get(roomRelId);
+            if (room) {
+                room.currentRoomTemp = state.val;
+                this.evaluateShutterRoom(room).catch(e => this.log.error(`Shutter room-temp eval failed for "${this.labelFor(roomRelId)}": ${e.message}`));
+            }
         }
         // Consumption tracking: source DP changed (foreign state)
         if (this.consumptionDpToTrackers.has(id)) {
