@@ -4,6 +4,7 @@ import {
     Divider, FormControlLabel, IconButton, List, ListItem, ListItemText,
     Stack, TextField, Typography,
 } from '@mui/material';
+import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
 import { I18n } from '@iobroker/adapter-react-v5';
 import { type FautNodeConfig, type FautTreeNode } from '../types/treeTypes';
@@ -16,6 +17,19 @@ interface Props {
 export default function RaumDetailPanel({ node, onConfigChange }: Props): React.JSX.Element {
     const cfg = node.config ?? {};
     const [confirmDeleteScene, setConfirmDeleteScene] = useState<string | null>(null);
+    const [addSceneDialogOpen, setAddSceneDialogOpen]   = useState(false);
+    const [newSceneName, setNewSceneName]               = useState('');
+
+    const handleAddScene = (): void => {
+        const name = newSceneName.trim();
+        if (!name) return;
+        const existing: string[] = (cfg.lampeSzenen as string[] | undefined) ?? [];
+        if (!['Tag', 'Nacht'].includes(name) && !existing.includes(name)) {
+            onConfigChange('lampeSzenen', [...existing, name]);
+        }
+        setNewSceneName('');
+        setAddSceneDialogOpen(false);
+    };
 
     return (
         <Stack spacing={2} sx={{ mt: 2 }}>
@@ -215,9 +229,18 @@ export default function RaumDetailPanel({ node, onConfigChange }: Props): React.
                 />
                 {cfg.lichtsteuerung && (
                     <Box sx={{ mt: 1, ml: 4 }}>
-                        <Typography variant="caption" color="text.secondary" display="block" gutterBottom>
-                            {I18n.t('Custom scenes')}
-                        </Typography>
+                        <Box sx={{ display: 'flex', alignItems: 'center', mb: 0.5 }}>
+                            <Typography variant="caption" color="text.secondary" sx={{ flexGrow: 1 }}>
+                                {I18n.t('Custom scenes')}
+                            </Typography>
+                            <Button
+                                size="small"
+                                startIcon={<AddIcon />}
+                                onClick={() => { setNewSceneName(''); setAddSceneDialogOpen(true); }}
+                            >
+                                {I18n.t('Add scene')}
+                            </Button>
+                        </Box>
                         {(cfg.lampeSzenen ?? []).length === 0 ? (
                             <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.8rem' }}>
                                 {I18n.t('No custom scenes')}
@@ -274,6 +297,29 @@ export default function RaumDetailPanel({ node, onConfigChange }: Props): React.
                         }}
                     >
                         {I18n.t('Delete')}
+                    </Button>
+                </DialogActions>
+            </Dialog>
+
+            {/* Add scene dialog */}
+            <Dialog open={addSceneDialogOpen} onClose={() => setAddSceneDialogOpen(false)} maxWidth="xs" fullWidth>
+                <DialogTitle>{I18n.t('Add scene')}</DialogTitle>
+                <DialogContent>
+                    <TextField
+                        autoFocus
+                        label={I18n.t('Scene name')}
+                        value={newSceneName}
+                        onChange={e => setNewSceneName(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') handleAddScene(); }}
+                        fullWidth
+                        size="small"
+                        sx={{ mt: 1 }}
+                    />
+                </DialogContent>
+                <DialogActions>
+                    <Button onClick={() => setAddSceneDialogOpen(false)}>{I18n.t('Cancel')}</Button>
+                    <Button onClick={handleAddScene} disabled={!newSceneName.trim()} variant="contained">
+                        {I18n.t('Add')}
                     </Button>
                 </DialogActions>
             </Dialog>

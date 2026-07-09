@@ -52,6 +52,8 @@ class Faut extends utils.Adapter {
     roomEntries = new Map();
     /** Room relIds with lichtsteuerung=true (for lightOn trigger in onStateChange). */
     lightRoomIds = new Set();
+    /** Maps roomRelId → all Lampe entries in that room. */
+    roomToLamps = new Map();
     /** Active cooldown timers, keyed by room relId. */
     cooldownTimers = new Map();
     /** Maps a battery DP ID to the own lowBat state relId. */
@@ -415,6 +417,7 @@ class Faut extends utils.Adapter {
     async setupRoomLogic(tree) {
         const globalLuxDpId = this.findGlobalLuxDp(tree);
         this.collectRoomConfigs(tree, '', globalLuxDpId);
+        this.collectLampConfigs(tree, '', null);
         if (this.roomEntries.size === 0)
             return;
         this.log.info(`Room logic active for ${this.roomEntries.size} room(s).`);
@@ -474,6 +477,43 @@ class Faut extends utils.Adapter {
             }
             if (node.children?.length)
                 this.collectRoomConfigs(node.children, relId, globalLuxDpId);
+        }
+    }
+    /**
+     * Recursively collects Lampe child nodes for each lichtsteuerung room.
+     * parentRoomRelId is the nearest ancestor Raum with lichtsteuerung=true.
+     */
+    collectLampConfigs(nodes, prefix, parentRoomRelId) {
+        for (const node of nodes) {
+            const relId = prefix ? `${prefix}.${node.id}` : node.id;
+            const cfg = node.config ?? {};
+            if (node.type === 'Raum') {
+                // New room context: pass this room as parent if lichtsteuerung is enabled
+                const roomRelId = cfg.lichtsteuerung ? relId : null;
+                if (node.children?.length)
+                    this.collectLampConfigs(node.children, relId, roomRelId);
+            }
+            else if (node.type === 'Lampe' && parentRoomRelId) {
+                const lamp = {
+                    relId,
+                    aktiviert: cfg.lampeAktiviert ?? true,
+                    sceneConfigs: cfg.lampeSceneConfigs ?? [],
+                    dpSchalter: cfg.dpLampeSchalter,
+                    dpDimmer: cfg.dpLampeDimmer,
+                    dpCt: cfg.dpLampeCt,
+                    dpColorHex: cfg.dpLampeColorHex,
+                    dpModus: cfg.dpLampeModus,
+                    modeWertWeiss: cfg.lampeModeWertWeiss,
+                    modeWertFarbe: cfg.lampeModeWertFarbe,
+                    dpSzene: cfg.dpLampeSzene,
+                };
+                const arr = this.roomToLamps.get(parentRoomRelId) ?? [];
+                arr.push(lamp);
+                this.roomToLamps.set(parentRoomRelId, arr);
+            }
+            else if (node.children?.length) {
+                this.collectLampConfigs(node.children, relId, parentRoomRelId);
+            }
         }
     }
     /** Recursively collects all DP IDs of child nodes matching targetType. */
@@ -578,7 +618,12 @@ class Faut extends utils.Adapter {
                 });
             }
         }
-        // Light control: set initial lightOn state
+        // Light control: set initial scene from nightMode, then compute lightOn
+        if (room.lichtsteuerung) {
+            const nightSt = await this.getStateAsync('global.nightMode');
+            const isNight = nightSt?.val === true;
+            await this.setStateAsync(`${room.relId}.scene`, { val: isNight ? 'Nacht' : 'Tag', ack: true });
+        }
         await this.updateLightOn(room.relId);
     }
     /** Handles a motion DP change for all rooms that monitor it. */
@@ -670,15 +715,80 @@ class Faut extends utils.Adapter {
         try {
             const presenceSt = await this.getStateAsync(`${roomRelId}.presence`);
             const darkSt = await this.getStateAsync(`${roomRelId}.dark`);
+            const sceneSt = await this.getStateAsync(`${roomRelId}.scene`);
             const presence = typeof presenceSt?.val === 'string' ? presenceSt.val : 'absent';
             const dark = typeof darkSt?.val === 'string' ? darkSt.val : 'bright';
+            const scene = typeof sceneSt?.val === 'string' ? sceneSt.val : 'Tag';
             const lightOn = (presence === 'present' || presence === 'cooldown') &&
                 (dark === 'dark' || dark === 'twilight');
             await this.setStateAsync(`${roomRelId}.lightOn`, { val: lightOn, ack: true });
-            this.log.debug(`Light: ${this.labelFor(roomRelId)}: lightOn=${lightOn} (presence=${presence}, dark=${dark})`);
+            this.logLight(`${this.labelFor(roomRelId)}: lightOn=${lightOn} (presence=${presence}, dark=${dark})`);
+            await this.applyRoomScene(roomRelId, scene, lightOn);
         }
         catch (e) {
             this.log.error(`updateLightOn failed for ${this.labelFor(roomRelId)}: ${e.message}`);
+        }
+    }
+    // ---- light scene application ----
+    /**
+     * Applies the current scene to all lamps in a room.
+     * Called after lightOn or scene changes.
+     */
+    async applyRoomScene(roomRelId, scene, lightOn) {
+        const lamps = this.roomToLamps.get(roomRelId);
+        if (!lamps?.length)
+            return;
+        for (const lamp of lamps) {
+            const config = lamp.sceneConfigs.find(c => c.scene === scene);
+            if (!config) {
+                this.logLightExtended(`${this.labelFor(roomRelId)} / ${this.labelFor(lamp.relId)}: no config for scene "${scene}" – skipping`);
+                continue;
+            }
+            const action = lightOn ? config.lightOn : config.lightOff;
+            await this.applyLampAction(roomRelId, lamp, action, scene, lightOn);
+        }
+    }
+    /** Applies one LampeSceneAction to a lamp (or dry-runs if aktiviert=false). */
+    async applyLampAction(roomRelId, lamp, action, scene, lightOn) {
+        const mode = lightOn ? 'Ein' : 'Aus';
+        const dryRun = !lamp.aktiviert;
+        const prefix = `${this.labelFor(roomRelId)} / ${this.labelFor(lamp.relId)} [scene=${scene}, ${mode}]`;
+        const write = async (dp, val, label) => {
+            if (dryRun) {
+                this.logLightExtended(`[DRY RUN] ${prefix}: ${label} → ${val}`);
+            }
+            else {
+                this.logLight(`${prefix}: ${label} → ${val}`);
+                await this.setForeignStateAsync(dp, { val, ack: false });
+            }
+        };
+        if (action.setSchalter && lamp.dpSchalter)
+            await write(lamp.dpSchalter, action.schalterWert ?? false, 'Schalter');
+        if (action.setDimmer && lamp.dpDimmer)
+            await write(lamp.dpDimmer, action.dimmerWert ?? 0, 'Dimmer');
+        if (action.setCt && lamp.dpCt)
+            await write(lamp.dpCt, action.ctWert ?? 0, 'ct');
+        if (action.setColorHex && lamp.dpColorHex)
+            await write(lamp.dpColorHex, action.colorHexWert ?? '', 'Farbe');
+        if (action.setModus && lamp.dpModus)
+            await write(lamp.dpModus, action.modusWert ?? 0, 'Modus');
+        if (action.setSzene && lamp.dpSzene)
+            await write(lamp.dpSzene, action.szeneWert ?? 0, 'Szene');
+    }
+    /**
+     * Sets scene to "Tag" or "Nacht" for all lichtsteuerung rooms based on night mode,
+     * then applies lamps for the new scene.
+     */
+    async handleNightModeForLights(isNight) {
+        if (this.lightRoomIds.size === 0)
+            return;
+        const scene = isNight ? 'Nacht' : 'Tag';
+        for (const roomRelId of this.lightRoomIds) {
+            await this.setStateAsync(`${roomRelId}.scene`, { val: scene, ack: true });
+            const lightOnSt = await this.getStateAsync(`${roomRelId}.lightOn`);
+            const lightOn = lightOnSt?.val === true;
+            this.logLight(`${this.labelFor(roomRelId)}: nightMode=${isNight} → scene=${scene}, lightOn=${lightOn}`);
+            await this.applyRoomScene(roomRelId, scene, lightOn);
         }
     }
     // ---- sun (Sonne) ----
@@ -1991,6 +2101,13 @@ class Faut extends utils.Adapter {
             }
             if (cfg.lichtsteuerung) {
                 specs.push({ id: 'lightOn', name: 'Light On', dataType: 'boolean', role: 'switch.light', def: false });
+                // scene: writable state with all available scenes as enum
+                const sceneNames = ['Tag', 'Nacht', ...(cfg.lampeSzenen ?? [])];
+                specs.push({
+                    id: 'scene', name: 'Scene', dataType: 'string', role: 'text', def: 'Tag',
+                    states: Object.fromEntries(sceneNames.map(s => [s, s])),
+                    write: true,
+                });
             }
             if (cfg.klimasteuerung) {
                 specs.push({ id: 'climate.setpoint', name: 'Climate Setpoint', dataType: 'number', role: 'value.temperature', unit: '\u00b0C', def: cfg.solltemperatur ?? 20 });
@@ -2161,6 +2278,12 @@ class Faut extends utils.Adapter {
                     this.log.error(`Climate night mode update failed: ${e.message}`);
                 });
             }
+            // Light control: update scene for all lichtsteuerung rooms
+            if (this.lightRoomIds.size > 0) {
+                this.handleNightModeForLights(!!state.val).catch(e => {
+                    this.log.error(`Light night mode update failed: ${e.message}`);
+                });
+            }
         }
         // Shutter: global lux changed → update cache and re-evaluate all shutter rooms
         if (this.shutterGlobalLuxDpId && id === this.shutterGlobalLuxDpId && typeof state.val === 'number') {
@@ -2226,12 +2349,24 @@ class Faut extends utils.Adapter {
                 });
             }
         }
-        // Light control: presence or dark changed → recompute lightOn
-        if (state.ack && id.startsWith(`${this.namespace}.`) &&
-            (id.endsWith('.presence') || id.endsWith('.dark'))) {
-            const roomRelId = id.slice(this.namespace.length + 1).replace(/\.(presence|dark)$/, '');
-            if (this.lightRoomIds.has(roomRelId)) {
-                this.updateLightOn(roomRelId).catch(e => this.log.error(`lightOn update failed for ${this.labelFor(roomRelId)}: ${e.message}`));
+        // Light control: user wrote to room.scene (ack=false) → apply lamps
+        // Note: presence/dark → lightOn is handled directly in handleMotionChange/handleLuxChange, not here.
+        if (!state.ack && id.startsWith(`${this.namespace}.`) && id.endsWith('.scene')) {
+            const roomRelId = id.slice(this.namespace.length + 1).replace(/\.scene$/, '');
+            if (this.lightRoomIds.has(roomRelId) && typeof state.val === 'string') {
+                const scene = state.val;
+                (async () => {
+                    try {
+                        await this.setStateAsync(`${roomRelId}.scene`, { val: scene, ack: true });
+                        const lightOnSt = await this.getStateAsync(`${roomRelId}.lightOn`);
+                        const lightOn = lightOnSt?.val === true;
+                        this.logLight(`${this.labelFor(roomRelId)}: scene set to "${scene}" (lightOn=${lightOn})`);
+                        await this.applyRoomScene(roomRelId, scene, lightOn);
+                    }
+                    catch (e) {
+                        this.log.error(`Scene apply failed for ${this.labelFor(roomRelId)}: ${e.message}`);
+                    }
+                })();
             }
         }
     }

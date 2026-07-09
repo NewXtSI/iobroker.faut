@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import {
     Box,
-    Button,
     Checkbox,
     Dialog,
     DialogActions,
@@ -22,7 +21,6 @@ import {
     TextField,
     Typography,
 } from '@mui/material';
-import AddIcon from '@mui/icons-material/Add';
 import { DialogSelectID, I18n, type IobTheme } from '@iobroker/adapter-react-v5';
 import {
     type FautNodeConfig,
@@ -126,10 +124,7 @@ export default function LampeDetailPanel({
     const cfg = node.config ?? {};
 
     // DP select dialog
-    const [selectKey, setSelectKey]         = useState<keyof FautNodeConfig | null>(null);
-    // Add scene dialog
-    const [addDialogOpen, setAddDialogOpen] = useState(false);
-    const [newSceneName, setNewSceneName]   = useState('');
+    const [selectKey, setSelectKey] = useState<keyof FautNodeConfig | null>(null);
 
     const openSelect  = (key: keyof FautNodeConfig): void => setSelectKey(key);
     const closeSelect = (): void => setSelectKey(null);
@@ -138,10 +133,8 @@ export default function LampeDetailPanel({
         closeSelect();
     };
 
-    // Scene data
-    const allScenes    = [...BUILTIN_SCENES, ...((cfg.lampeSzenen as string[] | undefined) ?? []), ...((parentRoom?.config?.lampeSzenen as string[] | undefined) ?? [])];
-    // deduplicate (room scenes take precedence, builtins always first)
-    const uniqueScenes = [...new Set(allScenes)];
+    // Scene data: always from parent room (Tag+Nacht are built-in)
+    const uniqueScenes = [...BUILTIN_SCENES, ...((parentRoom?.config?.lampeSzenen as string[] | undefined) ?? [])];
     const sceneConfigs = (cfg.lampeSceneConfigs ?? []) as LampeSceneConfig[];
 
     function getEntry(scene: string): LampeSceneConfig {
@@ -166,17 +159,6 @@ export default function LampeDetailPanel({
     // Active columns: only show when matching DP is configured
     const columns = ALL_COLUMNS.filter(col => !!(cfg[col.dpKey]));
 
-    const handleAddScene = (): void => {
-        const name = newSceneName.trim();
-        if (!name) return;
-        const existing: string[] = (parentRoom?.config?.lampeSzenen as string[] | undefined) ?? [];
-        if (!BUILTIN_SCENES.includes(name) && !existing.includes(name)) {
-            onRoomConfigChange('lampeSzenen', [...existing, name]);
-        }
-        setNewSceneName('');
-        setAddDialogOpen(false);
-    };
-
     return (
         <Stack spacing={2} sx={{ mt: 2 }}>
 
@@ -200,15 +182,6 @@ export default function LampeDetailPanel({
                     <Typography variant="subtitle2" sx={{ flexGrow: 1 }}>
                         {I18n.t('Scenes')}
                     </Typography>
-                    {parentRoom && (
-                        <Button
-                            size="small"
-                            startIcon={<AddIcon />}
-                            onClick={() => { setNewSceneName(''); setAddDialogOpen(true); }}
-                        >
-                            {I18n.t('Add scene')}
-                        </Button>
-                    )}
                 </Box>
 
                 {columns.length === 0 ? (
@@ -399,33 +372,6 @@ export default function LampeDetailPanel({
                     onOk={handleOk}
                 />
             )}
-
-            {/* Add scene dialog */}
-            <Dialog open={addDialogOpen} onClose={() => setAddDialogOpen(false)} maxWidth="xs" fullWidth>
-                <DialogTitle>{I18n.t('Add scene')}</DialogTitle>
-                <DialogContent>
-                    <TextField
-                        autoFocus
-                        label={I18n.t('Scene name')}
-                        value={newSceneName}
-                        onChange={e => setNewSceneName(e.target.value)}
-                        onKeyDown={e => { if (e.key === 'Enter') handleAddScene(); }}
-                        fullWidth
-                        size="small"
-                        sx={{ mt: 1 }}
-                    />
-                </DialogContent>
-                <DialogActions>
-                    <Button onClick={() => setAddDialogOpen(false)}>{I18n.t('Cancel')}</Button>
-                    <Button
-                        onClick={handleAddScene}
-                        disabled={!newSceneName.trim()}
-                        variant="contained"
-                    >
-                        {I18n.t('Add')}
-                    </Button>
-                </DialogActions>
-            </Dialog>
 
         </Stack>
     );
