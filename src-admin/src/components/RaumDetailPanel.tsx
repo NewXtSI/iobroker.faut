@@ -24,7 +24,7 @@ export default function RaumDetailPanel({ node, onConfigChange }: Props): React.
         const name = newSceneName.trim();
         if (!name) return;
         const existing: string[] = (cfg.lampeSzenen as string[] | undefined) ?? [];
-        if (!['Tag', 'Nacht'].includes(name) && !existing.includes(name)) {
+        if (!['Tag', 'Nacht', 'Manuell'].includes(name) && !existing.includes(name)) {
             onConfigChange('lampeSzenen', [...existing, name]);
         }
         setNewSceneName('');

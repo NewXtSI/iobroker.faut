@@ -778,6 +778,11 @@ class Faut extends utils.Adapter {
 	 * Called after lightOn or scene changes.
 	 */
 	private async applyRoomScene(roomRelId: string, scene: string, lightOn: boolean): Promise<void> {
+		// "Manuell" suspends all automation – lamp state is not touched
+		if (scene === 'Manuell') {
+			this.logLight(`${this.labelFor(roomRelId)}: scene=Manuell → Steuerung pausiert`);
+			return;
+		}
 		const lamps = this.roomToLamps.get(roomRelId);
 		if (!lamps?.length) return;
 		for (const lamp of lamps) {
@@ -2266,7 +2271,8 @@ class Faut extends utils.Adapter {
 			if (cfg.lichtsteuerung) {
 				specs.push({ id: 'lightOn', name: 'Light On', dataType: 'boolean', role: 'switch.light', def: false });
 				// scene: writable state with all available scenes as enum
-				const sceneNames = ['Tag', 'Nacht', ...((cfg.lampeSzenen as string[] | undefined) ?? [])];
+				// 'Manuell' is a reserved hidden scene; not shown in admin but valid as a state value
+				const sceneNames = ['Tag', 'Nacht', 'Manuell', ...((cfg.lampeSzenen as string[] | undefined) ?? [])];
 				specs.push({
 					id: 'scene', name: 'Scene', dataType: 'string', role: 'text', def: 'Tag',
 					states: Object.fromEntries(sceneNames.map(s => [s, s])) as Record<string, string>,
