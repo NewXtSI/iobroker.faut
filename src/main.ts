@@ -633,6 +633,7 @@ class Faut extends utils.Adapter {
 				if (existing !== undefined) { clearTimeout(existing); this.cooldownTimers.delete(roomRelId); }
 				this.logPresence(`${this.labelFor(roomRelId)}: motion detected on ${dpId} → present`);
 				await this.setStateAsync(`${roomRelId}.presence`, { val: 'present', ack: true });
+				await this.updateLightOn(roomRelId);
 			} else {
 				// Motion cleared: check if another sensor is still active
 				let anyOtherActive = false;
@@ -650,11 +651,15 @@ class Faut extends utils.Adapter {
 
 					this.logPresence(`${this.labelFor(roomRelId)}: motion cleared on ${dpId} → cooldown (${room.cooldownMs / 1000}s)`);
 					await this.setStateAsync(`${roomRelId}.presence`, { val: 'cooldown', ack: true });
+					await this.updateLightOn(roomRelId);
 					const timer = setTimeout(() => {
 						this.cooldownTimers.delete(roomRelId);
 						this.logPresence(`${this.labelFor(roomRelId)}: cooldown expired → absent`);
 						this.setStateAsync(`${roomRelId}.presence`, { val: 'absent', ack: true }).catch(e => {
 							this.log.error(`Cooldown expire failed for ${this.labelFor(roomRelId)}: ${(e as Error).message}`);
+						});
+						this.updateLightOn(roomRelId).catch(e => {
+							this.log.error(`lightOn cooldown-expire failed for ${this.labelFor(roomRelId)}: ${(e as Error).message}`);
 						});
 					}, room.cooldownMs);
 					this.cooldownTimers.set(roomRelId, timer);
@@ -673,6 +678,7 @@ class Faut extends utils.Adapter {
 			await this.setStateAsync(`${roomRelId}.dark`, {
 				val: this.computeDarkState(lux, room.dunkelgrenze), ack: true,
 			});
+			await this.updateLightOn(roomRelId);
 		}
 	}
 
