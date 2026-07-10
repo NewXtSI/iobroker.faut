@@ -174,6 +174,21 @@ export default function LampeDetailPanel({
                 label={I18n.t('Control enabled')}
             />
 
+            {/* Retrigger */}
+            <FormControlLabel
+                control={
+                    <Checkbox
+                        size="small"
+                        checked={cfg.lampeRetrigger ?? true}
+                        onChange={e => onConfigChange('lampeRetrigger', e.target.checked)}
+                    />
+                }
+                label={I18n.t('Retrigger')}
+            />
+            <Typography variant="caption" color="text.secondary" sx={{ mt: -1.5, ml: 4 }}>
+                {I18n.t('Retrigger description')}
+            </Typography>
+
             <Divider />
 
             {/* Scene table */}

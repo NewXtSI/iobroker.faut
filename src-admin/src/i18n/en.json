@@ -87,5 +87,7 @@
     "Since": "Since",
     "Duration": "Duration",
     "Low battery": "Low battery",
-    "Unreachable": "Unreachable"
+    "Unreachable": "Unreachable",
+    "Retrigger": "Retrigger",
+    "Retrigger description": "On: lamp DPs are written on every update. Off: lamp DPs are only written when lightOn or scene actually changes."
 }

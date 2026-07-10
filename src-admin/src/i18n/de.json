@@ -87,5 +87,7 @@
     "Since": "Seit",
     "Duration": "Dauer",
     "Low battery": "Batterie schwach",
-    "Unreachable": "Nicht erreichbar"
+    "Unreachable": "Nicht erreichbar",
+    "Retrigger": "Retrigger",
+    "Retrigger description": "An: Lampe wird bei jeder Aktualisierung gesetzt. Aus: Lampe wird nur bei echter \u00c4nderung (lightOn oder Szene) gesetzt."
 }

@@ -116,6 +116,7 @@ export interface FautNodeConfig {
     lampeSzenen?: string[];
     // Lampe actor
     lampeAktiviert?:     boolean;
+    lampeRetrigger?:      boolean;
     lampeSceneConfigs?:  LampeSceneConfig[];
     dpLampeSchalter?:    string;
     dpLampeDimmer?:      string;

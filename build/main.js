@@ -52,6 +52,8 @@ class Faut extends utils.Adapter {
     roomEntries = new Map();
     /** Room relIds with lichtsteuerung=true (for lightOn trigger in onStateChange). */
     lightRoomIds = new Set();
+    /** Tracks previous { lightOn, scene } per room to detect real changes (for retrigger=false lamps). */
+    roomLightState = new Map();
     /** Maps roomRelId → all Lampe entries in that room. */
     roomToLamps = new Map();
     /** Active cooldown timers, keyed by room relId. */
@@ -515,6 +517,7 @@ class Faut extends utils.Adapter {
                 const lamp = {
                     relId,
                     aktiviert: cfg.lampeAktiviert ?? true,
+                    retrigger: cfg.lampeRetrigger ?? true,
                     sceneConfigs: cfg.lampeSceneConfigs ?? [],
                     dpSchalter: cfg.dpLampeSchalter,
                     dpDimmer: cfg.dpLampeDimmer,
@@ -739,9 +742,13 @@ class Faut extends utils.Adapter {
             const scene = typeof sceneSt?.val === 'string' ? sceneSt.val : 'Tag';
             const lightOn = (presence === 'present' || presence === 'cooldown') &&
                 (dark === 'dark' || dark === 'twilight');
+            // Detect whether lightOn or scene actually changed (for retrigger=false lamps)
+            const prev = this.roomLightState.get(roomRelId);
+            const changed = !prev || prev.lightOn !== lightOn || prev.scene !== scene;
+            this.roomLightState.set(roomRelId, { lightOn, scene });
             await this.setStateAsync(`${roomRelId}.lightOn`, { val: lightOn, ack: true });
-            this.logLight(`${this.labelFor(roomRelId)}: lightOn=${lightOn} (presence=${presence}, dark=${dark})`);
-            await this.applyRoomScene(roomRelId, scene, lightOn);
+            this.logLight(`${this.labelFor(roomRelId)}: lightOn=${lightOn} (presence=${presence}, dark=${dark})${changed ? '' : ' [no change]'}`);
+            await this.applyRoomScene(roomRelId, scene, lightOn, changed);
         }
         catch (e) {
             this.log.error(`updateLightOn failed for ${this.labelFor(roomRelId)}: ${e.message}`);
@@ -752,7 +759,7 @@ class Faut extends utils.Adapter {
      * Applies the current scene to all lamps in a room.
      * Called after lightOn or scene changes.
      */
-    async applyRoomScene(roomRelId, scene, lightOn) {
+    async applyRoomScene(roomRelId, scene, lightOn, changed = true) {
         // "Manuell" suspends all automation – lamp state is not touched
         if (scene === 'Manuell') {
             this.logLight(`${this.labelFor(roomRelId)}: scene=Manuell → Steuerung pausiert`);
@@ -762,6 +769,11 @@ class Faut extends utils.Adapter {
         if (!lamps?.length)
             return;
         for (const lamp of lamps) {
+            // Skip lamps with retrigger=false when nothing actually changed
+            if (!lamp.retrigger && !changed) {
+                this.logLightExtended(`${this.labelFor(lamp.relId)}: retrigger=false, no change → skip`);
+                continue;
+            }
             const config = lamp.sceneConfigs.find(c => c.scene === scene);
             if (!config) {
                 this.logLightExtended(`${this.labelFor(roomRelId)} / ${this.labelFor(lamp.relId)}: no config for scene "${scene}" – skipping`);
@@ -807,11 +819,14 @@ class Faut extends utils.Adapter {
             return;
         const scene = isNight ? 'Nacht' : 'Tag';
         for (const roomRelId of this.lightRoomIds) {
-            await this.setStateAsync(`${roomRelId}.scene`, { val: scene, ack: true });
+            const prev = this.roomLightState.get(roomRelId);
             const lightOnSt = await this.getStateAsync(`${roomRelId}.lightOn`);
             const lightOn = lightOnSt?.val === true;
+            const changed = !prev || prev.lightOn !== lightOn || prev.scene !== scene;
+            this.roomLightState.set(roomRelId, { lightOn, scene });
+            await this.setStateAsync(`${roomRelId}.scene`, { val: scene, ack: true });
             this.logLight(`${this.labelFor(roomRelId)}: nightMode=${isNight} → scene=${scene}, lightOn=${lightOn}`);
-            await this.applyRoomScene(roomRelId, scene, lightOn);
+            await this.applyRoomScene(roomRelId, scene, lightOn, changed);
         }
     }
     // ---- sun (Sonne) ----
