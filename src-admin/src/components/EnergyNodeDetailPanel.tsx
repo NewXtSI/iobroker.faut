@@ -19,8 +19,8 @@ const ENERGY_FIELDS: Partial<Record<FautNodeType, Field[]>> = {
         { key: 'dpWechselrichterPower', i18nKey: 'DP Power (W)' },
     ],
     Batteriespeicher: [
-        { key: 'dpSoc',        i18nKey: 'DP State of charge (%)' },
-        { key: 'dpBatterieKwh', i18nKey: 'DP Energy (kWh)' },
+        { key: 'dpSoc',       i18nKey: 'DP State of charge (%)' },
+        { key: 'dpBatterieWh', i18nKey: 'DP Energy (Wh)' },
     ],
     Solarpanel: [
         { key: 'dpSolarpanelPower', i18nKey: 'DP Power (W)' },

@@ -118,8 +118,12 @@ class Faut extends utils.Adapter {
     energieVerbrauchDpId = null;
     /** Energy management: maps foreign Wechselrichter power DP ID → node relId (for labelling). */
     wechselrichterPowerDps = new Map();
+    /** Energy management: maps foreign Batteriespeicher Wh DP ID → node relId. */
+    batterieDps = new Map();
     /** Energy management: last seen power value per foreign DP (W). */
     energiePowerCache = new Map();
+    /** Energy management: last seen Wh value per Batteriespeicher DP. */
+    batterieWhCache = new Map();
     /** Consumption history: tracker configs keyed by tracker ID. */
     consumptionConfigs = new Map();
     /** Consumption history: current (summed) meter reading per tracker. */
@@ -236,6 +240,20 @@ class Faut extends utils.Adapter {
                 type: 'number',
                 role: 'value.power',
                 unit: 'W',
+                read: true,
+                write: false,
+                def: 0,
+            },
+            native: {},
+        });
+        // Create batteryreserve state (sum of all Batteriespeicher in Wh)
+        await this.extendObjectAsync('global.batteryreserve', {
+            type: 'state',
+            common: {
+                name: 'Battery Reserve',
+                type: 'number',
+                role: 'value.energy',
+                unit: 'Wh',
                 read: true,
                 write: false,
                 def: 0,
@@ -1408,7 +1426,7 @@ class Faut extends utils.Adapter {
         this.log.debug(`[consumption] Next rollover in ${Math.round(ms / 60_000)} min`);
     }
     // ---- energy management ----
-    /** Walks the tree and fills energieVerbrauchDpId + wechselrichterPowerDps. */
+    /** Walks the tree and fills energieVerbrauchDpId + wechselrichterPowerDps + batterieDps. */
     collectEnergyData(nodes, prefix) {
         for (const node of nodes) {
             const relId = prefix ? `${prefix}.${node.id}` : node.id;
@@ -1418,6 +1436,9 @@ class Faut extends utils.Adapter {
             }
             if (node.type === 'Wechselrichter' && cfg.dpWechselrichterPower) {
                 this.wechselrichterPowerDps.set(cfg.dpWechselrichterPower, relId);
+            }
+            if (node.type === 'Batteriespeicher' && cfg.dpBatterieWh) {
+                this.batterieDps.set(cfg.dpBatterieWh, relId);
             }
             if (node.children?.length)
                 this.collectEnergyData(node.children, relId);
@@ -1459,7 +1480,21 @@ class Faut extends utils.Adapter {
                 this.log.warn(`Energy: initial read of inverter (${this.labelFor(relId)}) failed: ${e.message}`);
             }
         }
+        // Batteriespeicher: subscribe + read initial
+        for (const [dpId, relId] of this.batterieDps) {
+            this.subscribeForeignStates(dpId);
+            try {
+                const st = await this.getForeignStateAsync(dpId);
+                if (st?.val !== null && st?.val !== undefined) {
+                    this.batterieWhCache.set(dpId, Number(st.val) || 0);
+                }
+            }
+            catch (e) {
+                this.log.warn(`Energy: initial read of Batteriespeicher (${this.labelFor(relId)}) failed: ${e.message}`);
+            }
+        }
         await this.recalcHausverbrauch();
+        await this.recalcBatteryReserve();
     }
     /** Sums all cached power values and writes global.hausverbrauch, then logs. */
     async recalcHausverbrauch() {
@@ -1473,6 +1508,17 @@ class Faut extends utils.Adapter {
         const hausverbrauch = netzbezug + solareinspeisung;
         this.logEnergyExtended(`Hausverbrauch: ${hausverbrauch} W (Netzbezug: ${netzbezug} W, Solareinspeisung: ${solareinspeisung} W)`);
         await this.setStateAsync('global.hausverbrauch', { val: hausverbrauch, ack: true });
+    }
+    /** Sums all cached Wh values and writes global.batteryreserve. */
+    async recalcBatteryReserve() {
+        if (this.batterieDps.size === 0)
+            return;
+        let total = 0;
+        for (const dpId of this.batterieDps.keys()) {
+            total += this.batterieWhCache.get(dpId) ?? 0;
+        }
+        this.logEnergy(`Battery reserve: ${total} Wh (${this.batterieDps.size} storage unit(s))`);
+        await this.setStateAsync('global.batteryreserve', { val: total, ack: true });
     }
     // ---- shutter control ----
     /** Builds relIdToLabel from the tree (full label path per node). */
@@ -2326,6 +2372,13 @@ class Faut extends utils.Adapter {
             this.energiePowerCache.set(id, Number(state.val) || 0);
             this.recalcHausverbrauch().catch(e => {
                 this.log.error(`Hausverbrauch recalc failed: ${e.message}`);
+            });
+        }
+        // Energy: Batteriespeicher Wh changed → update cache + recalc batteryreserve
+        if (this.batterieDps.has(id)) {
+            this.batterieWhCache.set(id, Number(state.val) || 0);
+            this.recalcBatteryReserve().catch(e => {
+                this.log.error(`BatteryReserve recalc failed: ${e.message}`);
             });
         }
         // Climate: Heizung state write-through (ack=false) and setpoint update (ack=true)

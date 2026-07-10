@@ -109,7 +109,7 @@ export interface FautNodeConfig {
     dpWechselrichterPower?: string;
     // Batteriespeicher
     dpSoc?: string;
-    dpBatterieKwh?: string;
+    dpBatterieWh?: string;
     // Solarpanel
     dpSolarpanelPower?: string;
     // Room Lampe scene management

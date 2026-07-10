@@ -1,7 +1,7 @@
 {
 	"common": {
 		"name": "faut",
-		"version": "0.0.4",
+		"version": "0.1.0",
 		"news": {
 			"0.0.4": {
 				"en": "log flag migration, presence logging, messagebox",

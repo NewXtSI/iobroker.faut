@@ -164,8 +164,12 @@ class Faut extends utils.Adapter {
 	private energieVerbrauchDpId: string | null = null;
 	/** Energy management: maps foreign Wechselrichter power DP ID → node relId (for labelling). */
 	private readonly wechselrichterPowerDps = new Map<string, string>();
+	/** Energy management: maps foreign Batteriespeicher Wh DP ID → node relId. */
+	private readonly batterieDps = new Map<string, string>();
 	/** Energy management: last seen power value per foreign DP (W). */
 	private readonly energiePowerCache = new Map<string, number>();
+	/** Energy management: last seen Wh value per Batteriespeicher DP. */
+	private readonly batterieWhCache = new Map<string, number>();
 	/** Consumption history: tracker configs keyed by tracker ID. */
 	private readonly consumptionConfigs   = new Map<string, ConsumptionConfig>();
 	/** Consumption history: current (summed) meter reading per tracker. */
@@ -294,6 +298,21 @@ class Faut extends utils.Adapter {
 				type:  'number',
 				role:  'value.power',
 				unit:  'W',
+				read:  true,
+				write: false,
+				def:   0,
+			},
+			native: {},
+		});
+
+		// Create batteryreserve state (sum of all Batteriespeicher in Wh)
+		await this.extendObjectAsync('global.batteryreserve', {
+			type: 'state',
+			common: {
+				name:  'Battery Reserve',
+				type:  'number',
+				role:  'value.energy',
+				unit:  'Wh',
 				read:  true,
 				write: false,
 				def:   0,
@@ -1543,7 +1562,7 @@ class Faut extends utils.Adapter {
 
 	// ---- energy management ----
 
-	/** Walks the tree and fills energieVerbrauchDpId + wechselrichterPowerDps. */
+	/** Walks the tree and fills energieVerbrauchDpId + wechselrichterPowerDps + batterieDps. */
 	private collectEnergyData(nodes: FautTreeNode[], prefix: string): void {
 		for (const node of nodes) {
 			const relId = prefix ? `${prefix}.${node.id}` : node.id;
@@ -1554,6 +1573,9 @@ class Faut extends utils.Adapter {
 			}
 			if (node.type === 'Wechselrichter' && cfg.dpWechselrichterPower) {
 				this.wechselrichterPowerDps.set(cfg.dpWechselrichterPower, relId);
+			}
+			if (node.type === 'Batteriespeicher' && cfg.dpBatterieWh) {
+				this.batterieDps.set(cfg.dpBatterieWh, relId);
 			}
 
 			if (node.children?.length) this.collectEnergyData(node.children, relId);
@@ -1600,7 +1622,21 @@ class Faut extends utils.Adapter {
 			}
 		}
 
+		// Batteriespeicher: subscribe + read initial
+		for (const [dpId, relId] of this.batterieDps) {
+			this.subscribeForeignStates(dpId);
+			try {
+				const st = await this.getForeignStateAsync(dpId);
+				if (st?.val !== null && st?.val !== undefined) {
+					this.batterieWhCache.set(dpId, Number(st.val) || 0);
+				}
+			} catch (e) {
+				this.log.warn(`Energy: initial read of Batteriespeicher (${this.labelFor(relId)}) failed: ${(e as Error).message}`);
+			}
+		}
+
 		await this.recalcHausverbrauch();
+		await this.recalcBatteryReserve();
 	}
 
 	/** Sums all cached power values and writes global.hausverbrauch, then logs. */
@@ -1618,6 +1654,17 @@ class Faut extends utils.Adapter {
 			`Hausverbrauch: ${hausverbrauch} W (Netzbezug: ${netzbezug} W, Solareinspeisung: ${solareinspeisung} W)`,
 		);
 		await this.setStateAsync('global.hausverbrauch', { val: hausverbrauch, ack: true });
+	}
+
+	/** Sums all cached Wh values and writes global.batteryreserve. */
+	private async recalcBatteryReserve(): Promise<void> {
+		if (this.batterieDps.size === 0) return;
+		let total = 0;
+		for (const dpId of this.batterieDps.keys()) {
+			total += this.batterieWhCache.get(dpId) ?? 0;
+		}
+		this.logEnergy(`Battery reserve: ${total} Wh (${this.batterieDps.size} storage unit(s))`);
+		await this.setStateAsync('global.batteryreserve', { val: total, ack: true });
 	}
 
 	// ---- shutter control ----
@@ -2496,6 +2543,14 @@ class Faut extends utils.Adapter {
 		if (this.energieVerbrauchDpId === id || this.wechselrichterPowerDps.has(id)) {			this.energiePowerCache.set(id, Number(state.val) || 0);
 			this.recalcHausverbrauch().catch(e => {
 				this.log.error(`Hausverbrauch recalc failed: ${(e as Error).message}`);
+			});
+		}
+
+		// Energy: Batteriespeicher Wh changed → update cache + recalc batteryreserve
+		if (this.batterieDps.has(id)) {
+			this.batterieWhCache.set(id, Number(state.val) || 0);
+			this.recalcBatteryReserve().catch(e => {
+				this.log.error(`BatteryReserve recalc failed: ${(e as Error).message}`);
 			});
 		}
 
