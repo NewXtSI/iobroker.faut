@@ -1886,10 +1886,20 @@ class Faut extends utils.Adapter {
 				await this.applyShutterState(rel, 'closed', 'startup: past sunset');
 		} else if (msToSunrise <= 0 && !isNightMode) {
 			// Daytime without night mode: run full evaluation (lux + sun + temperature)
+			// Manual-mode shutters are preserved inside evaluateShutterRoom (loop skips them)
 			await this.evaluateShutterRoom(room);
 		} else {
-			for (const rel of room.rolladenRelIds)
+			// Before sunrise or night mode active: close shutters, but preserve manual mode at startup
+			for (const rel of room.rolladenRelIds) {
+				try {
+					const cur = await this.getStateAsync(`${rel}.state`);
+					if (cur?.val === 'manual') {
+						this.logShutter(`${this.labelFor(rel)}: startup – keeping manual mode`);
+						continue;
+					}
+				} catch { /* state not yet created – proceed */ }
 				await this.applyShutterState(rel, 'closed', 'startup: before sunrise or night mode active');
+			}
 		}
 
 		// ---- Schedule future events ----
@@ -1923,15 +1933,17 @@ class Faut extends utils.Adapter {
 		if (this.shutterRooms.size === 0) return;
 
 		if (isNight) {
+			// Night mode ON: force-close ALL shutters, including those in manual mode.
+			// This resets manual mode (state changes from 'manual' → 'closed').
 			for (const room of this.shutterRooms.values()) {
-				this.logShutter(`Room "${this.labelFor(room.relId)}": night mode ON → closing`);
+				this.logShutter(`Room "${this.labelFor(room.relId)}": night mode ON → closing (overrides manual)`);
 				for (const rel of room.rolladenRelIds)
-					await this.applyShutterState(rel, 'closed', 'night mode activated');
+					await this.applyShutterState(rel, 'closed', 'night mode activated', true);
 			}
 			return;
 		}
 
-		// Night mode turned OFF → open immediately if daytime; re-schedule if before sunrise
+		// Night mode turned OFF → evaluate full shutter state (lux + sun + temp)
 		const now = new Date();
 		for (const room of this.shutterRooms.values()) {
 			if (this.sunLat === 0 && this.sunLng === 0) { this.logShutter(`Room "${this.labelFor(room.relId)}": night mode OFF, no geo`); continue; }
@@ -1939,9 +1951,8 @@ class Faut extends utils.Adapter {
 			const rise  = new Date(times.sunrise.getTime() + room.aufgangOffset   * 60_000);
 			const set   = new Date(times.sunset.getTime()  + room.untergangOffset * 60_000);
 			if (now >= rise && now < set) {
-				this.logShutter(`Room "${this.labelFor(room.relId)}": night mode OFF, daytime → opening`);
-				for (const rel of room.rolladenRelIds)
-					await this.applyShutterState(rel, 'open', 'night mode deactivated, daytime');
+				this.logShutter(`Room "${this.labelFor(room.relId)}": night mode OFF, daytime → evaluating`);
+				await this.evaluateShutterRoom(room);
 			} else if (now < rise) {
 				// Night mode ended before sunrise – reschedule so a fresh sunrise timer fires and opens the shutters.
 				this.logShutter(`Room "${this.labelFor(room.relId)}": night mode OFF before sunrise → rescheduling sunrise open`);
@@ -1957,21 +1968,23 @@ class Faut extends utils.Adapter {
 	 * Sets the shutter’s internal state and (if steuerungAktiviert) writes the position.
 	 * Skips if the shutter is in manual mode.
 	 */
-	private async applyShutterState(rolladenRelId: string, newState: string, reason: string): Promise<void> {
+	private async applyShutterState(rolladenRelId: string, newState: string, reason: string, forceOverrideManual = false): Promise<void> {
 		// Check if this actuator is enabled
 		if (this.rolladenPosCfg.get(rolladenRelId)?.aktiviert === false) {
 			this.logShutter(`${this.labelFor(rolladenRelId)}: deaktiviert – ignoring [${reason}]`);
 			return;
 		}
 
-		// Respect manual mode
-		try {
-			const cur = await this.getStateAsync(`${rolladenRelId}.state`);
-			if (cur?.val === 'manual') {
-				this.logShutter(`${this.labelFor(rolladenRelId)}: manual – ignoring [${reason}]`);
-				return;
-			}
-		} catch { /* state object not yet created – proceed */ }
+		// Respect manual mode (unless forced, e.g. by night mode)
+		if (!forceOverrideManual) {
+			try {
+				const cur = await this.getStateAsync(`${rolladenRelId}.state`);
+				if (cur?.val === 'manual') {
+					this.logShutter(`${this.labelFor(rolladenRelId)}: manual – ignoring [${reason}]`);
+					return;
+				}
+			} catch { /* state object not yet created – proceed */ }
+		}
 
 		await this.setStateAsync(`${rolladenRelId}.state`, { val: newState, ack: true });
 		this.logShutter(`${this.labelFor(rolladenRelId)}: state → ${newState} [${reason}]`);
@@ -2104,6 +2117,11 @@ class Faut extends utils.Adapter {
 					`Δout=${tempDiff !== null ? tempDiff.toFixed(1) : '?'}° ` +
 					`Δroom=${roomTempDiff !== null ? roomTempDiff.toFixed(1) : 'n/a'}°`;
 				await this.applyShutterState(rel, target, reason);
+			} else {
+				this.logShutterExtended(
+					`${this.labelFor(rel)}: no change (dead zone) [lux=${lux ?? '?'} ` +
+					`sun=${Math.round(this.currentSunAzimuth)}° dir=${room.himmelsrichtung}°(${sunInDir ? 'in' : 'out'})]`,
+				);
 			}
 		}
 	}
