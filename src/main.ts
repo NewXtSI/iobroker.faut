@@ -667,13 +667,28 @@ class Faut extends utils.Adapter {
 					if (s?.val === true) { anyActive = true; break; }
 				} catch { /* ignore */ }
 			}
-			// If in "cooldown" from a previous run but no timer is running → reset to absent
 			if (anyActive) {
-				this.logPresence(`${this.labelFor(room.relId)}: startup \u2192 present (sensor active)`);
+				this.logPresence(`${this.labelFor(room.relId)}: startup → present (sensor active)`);
 				await this.setStateAsync(`${room.relId}.presence`, { val: 'present', ack: true });
 			} else {
-				this.logPresence(`${this.labelFor(room.relId)}: startup \u2192 absent`);
-				await this.setStateAsync(`${room.relId}.presence`, { val: 'absent',  ack: true });
+				// Check if presence was 'cooldown' from a previous run (no timer running after restart).
+				// Instead of switching to absent immediately, restart the cooldown timer so light
+				// doesn't cut out abruptly. Better to stay on a little longer than to switch off suddenly.
+				const prevPresence = await this.getStateAsync(`${room.relId}.presence`);
+				if (prevPresence?.val === 'cooldown') {
+					this.logPresence(`${this.labelFor(room.relId)}: startup → cooldown was active, restarting cooldown timer`);
+					await this.setStateAsync(`${room.relId}.presence`, { val: 'cooldown', ack: true });
+					const timerId = setTimeout(async () => {
+						this.cooldownTimers.delete(room.relId);
+						this.logPresence(`${this.labelFor(room.relId)}: cooldown (restarted at startup) expired → absent`);
+						await this.setStateAsync(`${room.relId}.presence`, { val: 'absent', ack: true });
+						await this.updateLightOn(room.relId);
+					}, room.cooldownMs);
+					this.cooldownTimers.set(room.relId, timerId);
+				} else {
+					this.logPresence(`${this.labelFor(room.relId)}: startup → absent`);
+					await this.setStateAsync(`${room.relId}.presence`, { val: 'absent', ack: true });
+				}
 			}
 		}
 
