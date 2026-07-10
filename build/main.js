@@ -2408,7 +2408,7 @@ class Faut extends utils.Adapter {
                 });
             }
         }
-        // Light control: user wrote to room.scene (ack=false) → apply lamps
+        // Light control: user wrote to room.scene (ack=false) → ack + recompute full light state
         // Note: presence/dark → lightOn is handled directly in handleMotionChange/handleLuxChange, not here.
         if (!state.ack && id.startsWith(`${this.namespace}.`) && id.endsWith('.scene')) {
             const roomRelId = id.slice(this.namespace.length + 1).replace(/\.scene$/, '');
@@ -2416,11 +2416,11 @@ class Faut extends utils.Adapter {
                 const scene = state.val;
                 (async () => {
                     try {
+                        // Ack the new scene first so updateLightOn reads it back correctly
                         await this.setStateAsync(`${roomRelId}.scene`, { val: scene, ack: true });
-                        const lightOnSt = await this.getStateAsync(`${roomRelId}.lightOn`);
-                        const lightOn = lightOnSt?.val === true;
-                        this.logLight(`${this.labelFor(roomRelId)}: scene set to "${scene}" (lightOn=${lightOn})`);
-                        await this.applyRoomScene(roomRelId, scene, lightOn);
+                        this.logLight(`${this.labelFor(roomRelId)}: scene set to "${scene}" → recomputing light state`);
+                        // Full recompute: reads presence+dark+scene, writes lightOn, applies lamps
+                        await this.updateLightOn(roomRelId);
                     }
                     catch (e) {
                         this.log.error(`Scene apply failed for ${this.labelFor(roomRelId)}: ${e.message}`);
