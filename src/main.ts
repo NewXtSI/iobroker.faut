@@ -789,11 +789,26 @@ class Faut extends utils.Adapter {
 		for (const roomRelId of (this.dpToRoomsLux.get(dpId) ?? [])) {
 			const room = this.roomEntries.get(roomRelId);
 			if (!room) continue;
+			// Check if any shutter in this room is closed (≤10%)
+			const hasClosedShutter = await this.roomHasClosedShutter(roomRelId);
+			const darkValue = hasClosedShutter ? 'dark' : this.computeDarkState(lux, room.dunkelgrenze);
 			await this.setStateAsync(`${roomRelId}.dark`, {
-				val: this.computeDarkState(lux, room.dunkelgrenze), ack: true,
+				val: darkValue, ack: true,
 			});
 			await this.updateLightOn(roomRelId);
 		}
+	}
+
+	/** Checks if any shutter in the room is closed (≤10%). */
+	private async roomHasClosedShutter(roomRelId: string): Promise<boolean> {
+		const shutterRoom = this.shutterRooms.get(roomRelId);
+		if (!shutterRoom?.rolladenRelIds?.length) return false;
+		for (const rolladenRelId of shutterRoom.rolladenRelIds) {
+			const posSt = await this.getStateAsync(`${rolladenRelId}.position`);
+			const pos = typeof posSt?.val === 'number' ? posSt.val : 100;
+			if (pos <= 10) return true;
+		}
+		return false;
 	}
 
 	/** Computes dark/twilight/bright with hysteresis = threshold / 10. */
