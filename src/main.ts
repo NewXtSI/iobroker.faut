@@ -169,10 +169,14 @@ class Faut extends utils.Adapter {
 	private readonly wechselrichterPowerDps = new Map<string, string>();
 	/** Energy management: maps foreign Batteriespeicher Wh DP ID → node relId. */
 	private readonly batterieDps = new Map<string, string>();
+	/** Energy management: maps foreign Solarpanel power DP ID → node relId. */
+	private readonly solarpanelDps = new Map<string, string>();
 	/** Energy management: last seen power value per foreign DP (W). */
 	private readonly energiePowerCache = new Map<string, number>();
 	/** Energy management: last seen Wh value per Batteriespeicher DP. */
 	private readonly batterieWhCache = new Map<string, number>();
+	/** Energy management: last seen W value per Solarpanel DP. */
+	private readonly solarpanelWCache = new Map<string, number>();
 	/** Consumption history: tracker configs keyed by tracker ID. */
 	private readonly consumptionConfigs   = new Map<string, ConsumptionConfig>();
 	/** Consumption history: current (summed) meter reading per tracker. */
@@ -316,6 +320,21 @@ class Faut extends utils.Adapter {
 				type:  'number',
 				role:  'value.energy',
 				unit:  'Wh',
+				read:  true,
+				write: false,
+				def:   0,
+			},
+			native: {},
+		});
+
+		// Create solarpower state (sum of all Solarpanel power in W)
+		await this.extendObjectAsync('global.solarpower', {
+			type: 'state',
+			common: {
+				name:  'Solar Power',
+				type:  'number',
+				role:  'value.power',
+				unit:  'W',
 				read:  true,
 				write: false,
 				def:   0,
@@ -1608,6 +1627,9 @@ class Faut extends utils.Adapter {
 			if (node.type === 'Batteriespeicher' && cfg.dpBatterieWh) {
 				this.batterieDps.set(cfg.dpBatterieWh, relId);
 			}
+			if (node.type === 'Solarpanel' && cfg.dpSolarpanelPower) {
+				this.solarpanelDps.set(cfg.dpSolarpanelPower, relId);
+			}
 
 			if (node.children?.length) this.collectEnergyData(node.children, relId);
 		}
@@ -1666,8 +1688,22 @@ class Faut extends utils.Adapter {
 			}
 		}
 
+		// Solarpanel: subscribe + read initial
+		for (const [dpId, relId] of this.solarpanelDps) {
+			this.subscribeForeignStates(dpId);
+			try {
+				const st = await this.getForeignStateAsync(dpId);
+				if (st?.val !== null && st?.val !== undefined) {
+					this.solarpanelWCache.set(dpId, Number(st.val) || 0);
+				}
+			} catch (e) {
+				this.log.warn(`Energy: initial read of Solarpanel (${this.labelFor(relId)}) failed: ${(e as Error).message}`);
+			}
+		}
+
 		await this.recalcHausverbrauch();
 		await this.recalcBatteryReserve();
+		await this.recalcSolarPower();
 	}
 
 	/** Sums all cached power values and writes global.hausverbrauch, then logs. */
@@ -1696,6 +1732,17 @@ class Faut extends utils.Adapter {
 		}
 		this.logEnergy(`Battery reserve: ${total} Wh (${this.batterieDps.size} storage unit(s))`);
 		await this.setStateAsync('global.batteryreserve', { val: total, ack: true });
+	}
+
+	/** Sums all cached W values and writes global.solarpower. */
+	private async recalcSolarPower(): Promise<void> {
+		if (this.solarpanelDps.size === 0) return;
+		let total = 0;
+		for (const dpId of this.solarpanelDps.keys()) {
+			total += this.solarpanelWCache.get(dpId) ?? 0;
+		}
+		this.logEnergy(`Solar power: ${total} W (${this.solarpanelDps.size} panel(s))`);
+		await this.setStateAsync('global.solarpower', { val: total, ack: true });
 	}
 
 	// ---- shutter control ----
@@ -2600,6 +2647,14 @@ class Faut extends utils.Adapter {
 			this.batterieWhCache.set(id, Number(state.val) || 0);
 			this.recalcBatteryReserve().catch(e => {
 				this.log.error(`BatteryReserve recalc failed: ${(e as Error).message}`);
+			});
+		}
+
+		// Energy: Solarpanel W changed → update cache + recalc solarpower
+		if (this.solarpanelDps.has(id)) {
+			this.solarpanelWCache.set(id, Number(state.val) || 0);
+			this.recalcSolarPower().catch(e => {
+				this.log.error(`SolarPower recalc failed: ${(e as Error).message}`);
 			});
 		}
 
