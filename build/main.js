@@ -724,11 +724,10 @@ class Faut extends utils.Adapter {
                     const timer = setTimeout(() => {
                         this.cooldownTimers.delete(roomRelId);
                         this.logPresence(`${this.labelFor(roomRelId)}: cooldown expired → absent`);
-                        this.setStateAsync(`${roomRelId}.presence`, { val: 'absent', ack: true }).catch(e => {
+                        this.setStateAsync(`${roomRelId}.presence`, { val: 'absent', ack: true })
+                            .then(() => this.updateLightOn(roomRelId))
+                            .catch(e => {
                             this.log.error(`Cooldown expire failed for ${this.labelFor(roomRelId)}: ${e.message}`);
-                        });
-                        this.updateLightOn(roomRelId).catch(e => {
-                            this.log.error(`lightOn cooldown-expire failed for ${this.labelFor(roomRelId)}: ${e.message}`);
                         });
                     }, room.cooldownMs);
                     this.cooldownTimers.set(roomRelId, timer);
