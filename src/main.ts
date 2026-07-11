@@ -1738,8 +1738,10 @@ class Faut extends utils.Adapter {
 	private async recalcSolarPower(): Promise<void> {
 		if (this.solarpanelDps.size === 0) return;
 		let total = 0;
-		for (const dpId of this.solarpanelDps.keys()) {
-			total += this.solarpanelWCache.get(dpId) ?? 0;
+		for (const [dpId, relId] of this.solarpanelDps) {
+			const val = this.solarpanelWCache.get(dpId) ?? 0;
+			total += val;
+			this.logEnergyExtended(`Solar panel ${this.labelFor(relId)}: dp=${dpId} cached=${val} W`);
 		}
 		this.logEnergy(`Solar power: ${total} W (${this.solarpanelDps.size} panel(s))`);
 		await this.setStateAsync('global.solarpower', { val: total, ack: true });
