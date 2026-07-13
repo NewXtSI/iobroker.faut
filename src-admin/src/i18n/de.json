@@ -89,5 +89,18 @@
     "Low battery": "Batterie schwach",
     "Unreachable": "Nicht erreichbar",
     "Retrigger": "Retrigger",
-    "Retrigger description": "An: Lampe wird bei jeder Aktualisierung gesetzt. Aus: Lampe wird nur bei echter \u00c4nderung (lightOn oder Szene) gesetzt."
+    "Retrigger description": "An: Lampe wird bei jeder Aktualisierung gesetzt. Aus: Lampe wird nur bei echter Änderung (lightOn oder Szene) gesetzt.",
+    "Messages": "Benachrichtigungen",
+    "Telegram": "Telegram",
+    "Telegram Instance": "Telegram Instanz",
+    "None": "Keine",
+    "No notifications in night mode": "Ohne Benachrichtigung im Nachtmodus",
+    "Alexa Multiroom Group": "Alexa Multiroom Gruppe",
+    "Use room-specific output": "Raumspezifische Ausgabe nutzen",
+    "Testing": "Wird getestet",
+    "Test": "Test",
+    "Room-specific settings (override global)": "Raumspezifische Einstellungen (überschreiben global)",
+    "Glare protection angle (°)": "Blendschutz Winkel (°)",
+    "Heat protection ΔT (°C)": "Hitzeschutz ΔT (°C)",
+    "Leave empty for global setting": "Leer lassen für globale Einstellung"
 }

@@ -16,6 +16,7 @@ import TabGeneral from './Tabs/TabGeneral';
 import TabGrundstueck from './Tabs/TabGrundstueck';
 import TabGlobal from './Tabs/TabGlobal';
 import TabStatus from './Tabs/TabStatus';
+import TabMessages from './Tabs/TabMessages';
 import TabDebug from './Tabs/TabDebug';
 
 import enLang from './i18n/en.json';
@@ -95,6 +96,7 @@ export default class App extends GenericApp<GenericAppProps, AppState> {
                                 <Tab value="grundstueck" label={I18n.t('Property')} data-name="grundstueck" />
                                 <Tab value="global" label={I18n.t('Global')} data-name="global" />
                                 <Tab value="status" label={I18n.t('Status')} data-name="status" />
+                                <Tab value="messages" label={I18n.t('Messages')} data-name="messages" />
                                 <Tab value="debug" label={I18n.t('Debug')} data-name="debug" />
                             </Tabs>
                         </AppBar>
@@ -138,6 +140,17 @@ export default class App extends GenericApp<GenericAppProps, AppState> {
                             {this.state.selectedTab === 'status' && (
                                 <TabStatus
                                     key="status"
+                                    common={this.common!}
+                                    socket={this.socket}
+                                    native={this.state.native}
+                                    instance={this.instance}
+                                    adapterName={this.adapterName}
+                                    onChange={(attr, value) => this.updateNativeValue(attr, value)}
+                                />
+                            )}
+                            {this.state.selectedTab === 'messages' && (
+                                <TabMessages
+                                    key="messages"
                                     common={this.common!}
                                     socket={this.socket}
                                     native={this.state.native}

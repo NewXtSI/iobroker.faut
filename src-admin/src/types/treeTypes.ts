@@ -155,6 +155,9 @@ export interface FautNodeConfig {
     rolladenUntergangOffset?: number;
     blendschutz?: boolean;
     hitzeschutz?: boolean;
+    // Raum-specific shutter settings (override global if set)
+    blendschutzWinkel?: number;
+    hitzeschutzDeltaT?: number;
     // Person-specific
     dpResident?: string;
     // Alexa node-specific
@@ -199,6 +202,11 @@ export interface FautNodeConfig {
     dpLampeSzene?:       string;
     lampeUnreach?:       boolean;
     dpLampeUnreach?:     string;
+    // Heizung: Messages/Notifications
+    telegramInstanz?: string;
+    telegramSilentNachtmodus?: boolean;
+    alexaMultiroomGruppe?: string;
+    alexaRaumspezifischAktiv?: boolean;
 }
 
 // ---- Tree node ----

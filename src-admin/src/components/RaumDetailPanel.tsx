@@ -163,6 +163,43 @@ export default function RaumDetailPanel({ node, onConfigChange }: Props): React.
                             }
                             label={I18n.t('Heat protection')}
                         />
+                        {(cfg.blendschutz || cfg.hitzeschutz) && (
+                            <Box sx={{ mt: 1, ml: 2 }}>
+                                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+                                    {I18n.t('Room-specific settings (override global)')}
+                                </Typography>
+                                {cfg.blendschutz && (
+                                    <TextField
+                                        label={I18n.t('Glare protection angle (°)')}
+                                        type="number"
+                                        size="small"
+                                        value={cfg.blendschutzWinkel ?? ''}
+                                        onChange={e => {
+                                            const val = e.target.value === '' ? undefined : Number(e.target.value);
+                                            onConfigChange('blendschutzWinkel', val);
+                                        }}
+                                        placeholder={I18n.t('Leave empty for global setting')}
+                                        inputProps={{ min: 0, max: 180, step: 1 }}
+                                        sx={{ width: 220, display: 'block', mb: 1 }}
+                                    />
+                                )}
+                                {cfg.hitzeschutz && (
+                                    <TextField
+                                        label={I18n.t('Heat protection ΔT (°C)')}
+                                        type="number"
+                                        size="small"
+                                        value={cfg.hitzeschutzDeltaT ?? ''}
+                                        onChange={e => {
+                                            const val = e.target.value === '' ? undefined : Number(e.target.value);
+                                            onConfigChange('hitzeschutzDeltaT', val);
+                                        }}
+                                        placeholder={I18n.t('Leave empty for global setting')}
+                                        inputProps={{ min: 0, max: 10, step: 0.5 }}
+                                        sx={{ width: 220 }}
+                                    />
+                                )}
+                            </Box>
+                        )}
                     </Stack>
                 )}
             </Box>

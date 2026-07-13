@@ -89,5 +89,18 @@
     "Low battery": "Low battery",
     "Unreachable": "Unreachable",
     "Retrigger": "Retrigger",
-    "Retrigger description": "On: lamp DPs are written on every update. Off: lamp DPs are only written when lightOn or scene actually changes."
+    "Retrigger description": "On: lamp DPs are written on every update. Off: lamp DPs are only written when lightOn or scene actually changes.",
+    "Messages": "Notifications",
+    "Telegram": "Telegram",
+    "Telegram Instance": "Telegram Instance",
+    "None": "None",
+    "No notifications in night mode": "No notifications in night mode",
+    "Alexa Multiroom Group": "Alexa Multiroom Group",
+    "Use room-specific output": "Use room-specific output",
+    "Testing": "Testing",
+    "Test": "Test",
+    "Room-specific settings (override global)": "Room-specific settings (override global)",
+    "Glare protection angle (°)": "Glare protection angle (°)",
+    "Heat protection ΔT (°C)": "Heat protection ΔT (°C)",
+    "Leave empty for global setting": "Leave empty for global setting"
 }
