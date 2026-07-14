@@ -7,7 +7,12 @@ import {
     CardHeader,
     Checkbox,
     CircularProgress,
+    FormControl,
     FormControlLabel,
+    InputLabel,
+    MenuItem,
+    Select,
+    type SelectChangeEvent,
 } from '@mui/material';
 import { DialogSelectID, I18n, type IobTheme } from '@iobroker/adapter-react-v5';
 import DpField from '../components/DpField';
