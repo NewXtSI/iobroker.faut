@@ -7,15 +7,10 @@ import {
     CardHeader,
     Checkbox,
     CircularProgress,
-    FormControl,
     FormControlLabel,
-    InputLabel,
-    MenuItem,
-    Select,
-    SelectChangeEvent,
-    Typography,
 } from '@mui/material';
-import { I18n } from '@iobroker/adapter-react-v5';
+import { DialogSelectID, I18n, type IobTheme } from '@iobroker/adapter-react-v5';
+import DpField from '../components/DpField';
 
 interface IobObject {
     _id: string;
@@ -28,17 +23,18 @@ interface TabMessagesProps {
     common: any;
     socket: any;
     native: any;
-    instance: string;
+    instance: number;
     adapterName: string;
+    theme?: IobTheme;
     onChange: (attr: string, value: any) => void;
 }
 
 interface TabMessagesState {
     telegramInstanzen: { id: string; name: string }[];
-    alexaMultiroomGruppen: { id: string; name: string }[];
     loading: boolean;
     testingTelegram: boolean;
     testingAlexa: boolean;
+    alexaSelectOpen: boolean;
 }
 
 export default class TabMessages extends React.Component<TabMessagesProps, TabMessagesState> {
@@ -46,16 +42,15 @@ export default class TabMessages extends React.Component<TabMessagesProps, TabMe
         super(props);
         this.state = {
             telegramInstanzen: [],
-            alexaMultiroomGruppen: [],
             loading: true,
             testingTelegram: false,
             testingAlexa: false,
+            alexaSelectOpen: false,
         };
     }
 
     async componentDidMount(): Promise<void> {
         await this.loadTelegramInstances();
-        await this.loadAlexaMultiroomGroups();
         this.setState({ loading: false });
     }
 
@@ -84,66 +79,23 @@ export default class TabMessages extends React.Component<TabMessagesProps, TabMe
         }
     }
 
-    private async loadAlexaMultiroomGroups(): Promise<void> {
-        try {
-            const objs = await this.props.socket.getObjects(true);
-            const groups: { id: string; name: string }[] = [];
-
-            // Look for alexadevice.0 or similar
-            for (const [id, obj] of Object.entries(objs)) {
-                const objTyped = obj as IobObject;
-                if (
-                    id.match(/^system\.adapter\.alexadevice\.\d+$/) &&
-                    objTyped.type === 'instance'
-                ) {
-                    const instanceNum = id.split('.')[3];
-                    const deviceNs = `alexadevice.${instanceNum}`;
-
-                    // Look for multiroom group objects
-                    for (const [devId, devObj] of Object.entries(objs)) {
-                        const devObjTyped = devObj as IobObject;
-                        if (
-                            devId.startsWith(deviceNs) &&
-                            devId.includes('Echo_Hub') &&
-                            devObjTyped.type === 'device'
-                        ) {
-                            const groupName =
-                                devObjTyped.common?.name || devId.split('.').pop() || devId;
-                            groups.push({
-                                id: devId,
-                                name: String(groupName),
-                            });
-                        }
-                    }
-                }
-            }
-
-            this.setState({ alexaMultiroomGruppen: groups });
-        } catch (e) {
-            console.error('Failed to load Alexa multiroom groups:', e);
-        }
-    }
-
     private async testTelegram(): Promise<void> {
         this.setState({ testingTelegram: true });
         try {
             const instanz = this.props.native?.telegramInstanz || '';
             if (!instanz) {
-                alert('Keine Telegram Instanz ausgewählt');
+                alert(I18n.t('No Telegram instance selected'));
                 this.setState({ testingTelegram: false });
                 return;
             }
-
-            // Send test message
-            await this.props.socket.setState(`${instanz}.communication`, {
-                val: `Test message from ioBroker.faut at ${new Date().toLocaleTimeString()}`,
+            await this.props.socket.setState(`${instanz}.communicate.response`, {
+                val: `[TEST] ioBroker.faut – ${new Date().toLocaleTimeString()}`,
                 ack: false,
             });
-
-            alert('Test-Nachricht gesendet');
+            alert(I18n.t('Test message sent'));
         } catch (e) {
             console.error('Telegram test failed:', e);
-            alert(`Test fehlgeschlagen: ${(e as Error).message}`);
+            alert(`${I18n.t('Test failed')}: ${(e as Error).message}`);
         } finally {
             this.setState({ testingTelegram: false });
         }
@@ -154,22 +106,19 @@ export default class TabMessages extends React.Component<TabMessagesProps, TabMe
         try {
             const gruppe = this.props.native?.alexaMultiroomGruppe || '';
             if (!gruppe) {
-                alert('Keine Alexa Multiroom Gruppe ausgewählt');
+                alert(I18n.t('No Alexa group selected'));
                 this.setState({ testingAlexa: false });
                 return;
             }
-
-            // Attempt to trigger Alexa test message
-            const ttsPath = `${gruppe}.Alexa.TextToSpeech`;
+            const ttsPath = `${gruppe}.Commands.speak`;
             await this.props.socket.setState(ttsPath, {
-                val: 'Test message from ioBroker faut adapter',
+                val: 'Das ist ein Test von ioBroker faut.',
                 ack: false,
             });
-
-            alert('Test-Ausgabe an Alexa gesendet');
+            alert(I18n.t('Test message sent'));
         } catch (e) {
             console.error('Alexa test failed:', e);
-            alert(`Test fehlgeschlagen: ${(e as Error).message}`);
+            alert(`${I18n.t('Test failed')}: ${(e as Error).message}`);
         } finally {
             this.setState({ testingAlexa: false });
         }
@@ -184,11 +133,13 @@ export default class TabMessages extends React.Component<TabMessagesProps, TabMe
             );
         }
 
+        const alexaGruppe = (this.props.native?.alexaMultiroomGruppe as string | undefined) ?? '';
+
         return (
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                 {/* Telegram Section */}
                 <Card>
-                    <CardHeader title={I18n.t('Telegram')} />
+                    <CardHeader title="Telegram" />
                     <CardContent sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                         <FormControl fullWidth>
                             <InputLabel>{I18n.t('Telegram Instance')}</InputLabel>
@@ -227,21 +178,18 @@ export default class TabMessages extends React.Component<TabMessagesProps, TabMe
                             label={I18n.t('No notifications in night mode')}
                         />
 
-                        <Button
-                            variant="contained"
-                            color="primary"
-                            onClick={() => this.testTelegram()}
-                            disabled={this.state.testingTelegram}
-                        >
-                            {this.state.testingTelegram ? (
-                                <>
-                                    <CircularProgress size={20} sx={{ mr: 1 }} />
-                                    {I18n.t('Testing')}...
-                                </>
-                            ) : (
-                                I18n.t('Test')
-                            )}
-                        </Button>
+                        <Box>
+                            <Button
+                                variant="outlined"
+                                size="small"
+                                onClick={() => this.testTelegram()}
+                                disabled={this.state.testingTelegram || !this.props.native?.telegramInstanz}
+                            >
+                                {this.state.testingTelegram ? (
+                                    <><CircularProgress size={16} sx={{ mr: 1 }} />{I18n.t('Testing')}...</>
+                                ) : I18n.t('Test')}
+                            </Button>
+                        </Box>
                     </CardContent>
                 </Card>
 
@@ -249,60 +197,57 @@ export default class TabMessages extends React.Component<TabMessagesProps, TabMe
                 <Card>
                     <CardHeader title="Alexa" />
                     <CardContent sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                        <FormControl fullWidth>
-                            <InputLabel>{I18n.t('Alexa Multiroom Group')}</InputLabel>
-                            <Select
-                                label={I18n.t('Alexa Multiroom Group')}
-                                value={this.props.native?.alexaMultiroomGruppe || ''}
-                                onChange={(e: SelectChangeEvent) => {
-                                    this.props.onChange('alexaMultiroomGruppe', e.target.value);
-                                }}
-                            >
-                                <MenuItem value="">
-                                    <em>{I18n.t('None')}</em>
-                                </MenuItem>
-                                {this.state.alexaMultiroomGruppen.map((gruppe) => (
-                                    <MenuItem key={gruppe.id} value={gruppe.id}>
-                                        {gruppe.name}
-                                    </MenuItem>
-                                ))}
-                            </Select>
-                        </FormControl>
+                        <DpField
+                            label={I18n.t('Alexa Multiroom Group')}
+                            value={alexaGruppe}
+                            onChange={v => this.props.onChange('alexaMultiroomGruppe', v)}
+                            onSelect={() => this.setState({ alexaSelectOpen: true })}
+                        />
 
                         <FormControlLabel
                             control={
                                 <Checkbox
-                                    checked={
-                                        this.props.native?.alexaRaumspezifischAktiv !== false
+                                    checked={this.props.native?.alexaRaumspezifischAktiv !== false}
+                                    onChange={(e) =>
+                                        this.props.onChange('alexaRaumspezifischAktiv', e.target.checked)
                                     }
-                                    onChange={(e) => {
-                                        this.props.onChange(
-                                            'alexaRaumspezifischAktiv',
-                                            e.target.checked,
-                                        );
-                                    }}
                                 />
                             }
                             label={I18n.t('Use room-specific output')}
                         />
 
-                        <Button
-                            variant="contained"
-                            color="primary"
-                            onClick={() => this.testAlexa()}
-                            disabled={this.state.testingAlexa}
-                        >
-                            {this.state.testingAlexa ? (
-                                <>
-                                    <CircularProgress size={20} sx={{ mr: 1 }} />
-                                    {I18n.t('Testing')}...
-                                </>
-                            ) : (
-                                I18n.t('Test')
-                            )}
-                        </Button>
+                        <Box>
+                            <Button
+                                variant="outlined"
+                                size="small"
+                                onClick={() => this.testAlexa()}
+                                disabled={this.state.testingAlexa || !alexaGruppe}
+                            >
+                                {this.state.testingAlexa ? (
+                                    <><CircularProgress size={16} sx={{ mr: 1 }} />{I18n.t('Testing')}...</>
+                                ) : I18n.t('Test')}
+                            </Button>
+                        </Box>
                     </CardContent>
                 </Card>
+
+                {/* DialogSelectID for Alexa group */}
+                {this.state.alexaSelectOpen && (
+                    <DialogSelectID
+                        key="alexa-group-select"
+                        socket={this.props.socket}
+                        dialogName="alexaGroupSelect"
+                        title={I18n.t('Alexa Multiroom Group')}
+                        selected={alexaGruppe}
+                        statesOnly={false}
+                        onOk={(id: string | string[]) => {
+                            const selected = Array.isArray(id) ? id[0] : id;
+                            if (selected) this.props.onChange('alexaMultiroomGruppe', selected);
+                            this.setState({ alexaSelectOpen: false });
+                        }}
+                        onClose={() => this.setState({ alexaSelectOpen: false })}
+                    />
+                )}
             </Box>
         );
     }

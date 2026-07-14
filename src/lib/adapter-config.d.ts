@@ -33,6 +33,14 @@ declare global {
 			logEnergy: boolean;
 			/** Log-Flag: Energieverbrauch erweitert */
 			logEnergyExtended: boolean;
+			/** Telegram Instanz-ID für Benachrichtigungen (z.B. 'telegram.0') */
+			telegramInstanz: string;
+			/** Info-Meldungen im Nachtmodus nicht senden */
+			telegramSilentNachtmodus: boolean;
+			/** Alexa Multiroom Gruppe DP-Pfad */
+			alexaMultiroomGruppe: string;
+			/** Raumspezifische Alexa-Ausgabe aktivieren */
+			alexaRaumspezifischAktiv: boolean;
 		}
 	}
 }

@@ -96,7 +96,7 @@ export default class App extends GenericApp<GenericAppProps, AppState> {
                                 <Tab value="grundstueck" label={I18n.t('Property')} data-name="grundstueck" />
                                 <Tab value="global" label={I18n.t('Global')} data-name="global" />
                                 <Tab value="status" label={I18n.t('Status')} data-name="status" />
-                                <Tab value="messages" label={I18n.t('Messages')} data-name="messages" />
+                                <Tab value="messages" label={I18n.t('Messages config')} data-name="messages" />
                                 <Tab value="debug" label={I18n.t('Debug')} data-name="debug" />
                             </Tabs>
                         </AppBar>

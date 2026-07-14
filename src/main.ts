@@ -88,6 +88,24 @@ interface ShutterRoomEntry {
 /** After this many ms without a trigger-DP update the sensor is considered unreachable. */
 const UNREACH_TIMEOUT_MS = 1_800_000; // 30 minutes
 
+/** Default timeout for messages in seconds. */
+const MSG_DEFAULT_TIMEOUT_S = 600;
+
+/** A notification message managed by the adapter. */
+interface FautMessage {
+	uuid:       string;
+	severity:   'info' | 'warning' | 'error';
+	message:    string;
+	/** Internal key used for deduplication – postMessage with same source replaces the old one. */
+	source:     string;
+	needAck:    boolean;
+	/** Seconds until auto-expiry. 0 = no expiry. For needAck=true: starts after ack. */
+	msgTimeout: number;
+	createdAt:  number;
+	acked:      boolean;
+	ackedAt?:   number;
+}
+
 class Faut extends utils.Adapter {
 	/** Maps a foreign state ID (source DP) to the relative ID of our own state. */
 	private readonly dpToStateMap    = new Map<string, string>();
@@ -189,6 +207,10 @@ class Faut extends utils.Adapter {
 	private readonly consumptionAnchors   = new Map<string, TrackerAnchors>();
 	/** Consumption history: midnight rollover timer. */
 	private consumptionMidnightTimer: ReturnType<typeof setTimeout> | null = null;
+	/** In-memory message list (persisted to global.messages as JSON). */
+	private messages: FautMessage[] = [];
+	/** Periodic timer for checking message expiry. */
+	private messagesCheckTimer: ReturnType<typeof setInterval> | null = null;
 
 	public constructor(options: Partial<utils.AdapterOptions> = {}) {
 		super({
@@ -341,6 +363,30 @@ class Faut extends utils.Adapter {
 			},
 			native: {},
 		});
+
+		// Create messages state (JSON array of FautMessage, read+write for VIS)
+		await this.extendObjectAsync('global.messages', {
+			type: 'state',
+			common: {
+				name:  'Messages',
+				type:  'string',
+				role:  'json',
+				read:  true,
+				write: true,
+				def:   '[]',
+			},
+			native: {},
+		});
+		this.subscribeStates('global.messages');
+		// Load persisted messages on startup
+		try {
+			const msgSt = await this.getStateAsync('global.messages');
+			if (typeof msgSt?.val === 'string' && msgSt.val !== '[]') {
+				this.messages = JSON.parse(msgSt.val) as FautMessage[];
+			}
+		} catch (e) {
+			this.log.warn(`Failed to load persisted messages: ${(e as Error).message}`);
+		}
 
 		const dpId = (this.config.dpNachtmodus as string | undefined) ?? '';
 		this.nightModeDpId = dpId;
@@ -963,6 +1009,9 @@ class Faut extends utils.Adapter {
 				this.log.error(`Sun update error: ${(e as Error).message}`);
 			});
 		}, 5 * 60_000);
+
+		// Start message expiry checker every 30s
+		this.messagesCheckTimer = setInterval(() => this.checkMessageTimeouts(), 30_000);
 	}
 
 	/** Loads lat/lng from system.config once (no-op if already loaded). */
@@ -2461,6 +2510,120 @@ class Faut extends utils.Adapter {
 
 	// ---- lifecycle ----
 
+	// ---- message management ----
+
+	/** Generates a simple UUID v4. */
+	private generateUuid(): string {
+		return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+			const r = Math.random() * 16 | 0;
+			return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+		});
+	}
+
+	/**
+	 * Posts a new notification message. If a message with the same source already exists,
+	 * it is replaced. Persists to global.messages and sends a Telegram notification.
+	 */
+	postMessage(
+		source:     string,
+		severity:   'info' | 'warning' | 'error',
+		message:    string,
+		needAck     = false,
+		msgTimeout  = MSG_DEFAULT_TIMEOUT_S,
+	): void {
+		// Replace existing message from same source
+		this.messages = this.messages.filter(m => m.source !== source);
+		const msg: FautMessage = {
+			uuid: this.generateUuid(),
+			severity, message, source, needAck, msgTimeout,
+			createdAt: Date.now(),
+			acked: false,
+		};
+		this.messages.push(msg);
+		this.saveMessages().catch(e => this.log.error(`saveMessages failed: ${(e as Error).message}`));
+		this.sendTelegramMessage(msg).catch(e => this.log.warn(`Telegram send failed: ${(e as Error).message}`));
+	}
+
+	/**
+	 * Removes an existing message by source key (e.g. when the condition that caused it is resolved).
+	 */
+	removeMessage(source: string): void {
+		const before = this.messages.length;
+		this.messages = this.messages.filter(m => m.source !== source);
+		if (this.messages.length !== before) {
+			this.saveMessages().catch(e => this.log.error(`saveMessages failed: ${(e as Error).message}`));
+		}
+	}
+
+	/** Marks a single message as acknowledged by UUID. Starts the expiry timer. */
+	ackMessage(uuid: string): void {
+		const msg = this.messages.find(m => m.uuid === uuid);
+		if (msg && !msg.acked) {
+			msg.acked   = true;
+			msg.ackedAt = Date.now();
+			this.saveMessages().catch(e => this.log.error(`saveMessages failed: ${(e as Error).message}`));
+		}
+	}
+
+	/** Acknowledges all pending messages. */
+	ackAllMessages(): void {
+		let changed = false;
+		for (const msg of this.messages) {
+			if (!msg.acked) {
+				msg.acked   = true;
+				msg.ackedAt = Date.now();
+				changed     = true;
+			}
+		}
+		if (changed) {
+			this.saveMessages().catch(e => this.log.error(`saveMessages failed: ${(e as Error).message}`));
+		}
+	}
+
+	/** Called every 30s – removes messages whose timeout has expired. */
+	checkMessageTimeouts(): void {
+		const now    = Date.now();
+		const before = this.messages.length;
+		this.messages = this.messages.filter(msg => {
+			if (msg.msgTimeout <= 0) return true;
+			if (!msg.needAck) {
+				// Timer starts at creation
+				return now < msg.createdAt + msg.msgTimeout * 1000;
+			}
+			if (msg.acked && msg.ackedAt !== undefined) {
+				// Timer starts after ack
+				return now < msg.ackedAt + msg.msgTimeout * 1000;
+			}
+			return true; // needAck=true and not yet acked: keep forever
+		});
+		if (this.messages.length !== before) {
+			this.saveMessages().catch(e => this.log.error(`saveMessages failed: ${(e as Error).message}`));
+		}
+	}
+
+	/** Persists messages to global.messages state. */
+	private async saveMessages(): Promise<void> {
+		await this.setStateAsync('global.messages', { val: JSON.stringify(this.messages), ack: true });
+	}
+
+	/** Sends a Telegram notification for a new message. */
+	private async sendTelegramMessage(msg: FautMessage): Promise<void> {
+		const instanz = (this.config.telegramInstanz as string | undefined) ?? '';
+		if (!instanz) return;
+
+		// Info messages: skip if night mode active (unless telegramSilentNachtmodus=false)
+		if (msg.severity === 'info' && this.config.telegramSilentNachtmodus !== false) {
+			try {
+				const nightSt = await this.getStateAsync('global.nightMode');
+				if (nightSt?.val === true) return;
+			} catch { /* ignore */ }
+		}
+
+		const prefix = msg.severity === 'error' ? '[ERROR]' : msg.severity === 'warning' ? '[WARN]' : '[INFO]';
+		const text   = `${prefix} ${msg.message}`;
+		this.sendTo(instanz, 'send', { text });
+	}
+
 	/**
 	 * Is called when adapter shuts down – callback must be called under any circumstances!
 	 */
@@ -2471,6 +2634,7 @@ class Faut extends utils.Adapter {
 			if (this.sunIntervalTimer !== null) clearInterval(this.sunIntervalTimer);
 			if (this.shutterDailyTimer !== null) clearTimeout(this.shutterDailyTimer);
 			if (this.consumptionMidnightTimer !== null) clearTimeout(this.consumptionMidnightTimer);
+			if (this.messagesCheckTimer !== null) clearInterval(this.messagesCheckTimer);
 			for (const room of this.shutterRooms.values()) {
 				if (room.sunriseTimer !== null) clearTimeout(room.sunriseTimer);
 				if (room.sunsetTimer  !== null) clearTimeout(room.sunsetTimer);
@@ -2573,6 +2737,24 @@ class Faut extends utils.Adapter {
 			this.setForeignStateAsync(this.nightModeDpId, { val: !!state.val, ack: false }).catch(e => {
 				this.log.error(`Night mode write-through failed: ${(e as Error).message}`);
 			});
+		}
+
+		// global.messages: external write (ack=false) → apply acks from VIS
+		if (id === `${this.namespace}.global.messages` && !state.ack && typeof state.val === 'string') {
+			try {
+				const incoming = JSON.parse(state.val) as FautMessage[];
+				for (const ext of incoming) {
+					const local = this.messages.find(m => m.uuid === ext.uuid);
+					if (local && !local.acked && ext.acked) {
+						local.acked   = true;
+						local.ackedAt = ext.ackedAt ?? Date.now();
+					}
+				}
+				this.saveMessages().catch(e => this.log.error(`saveMessages (VIS ack) failed: ${(e as Error).message}`));
+			} catch (e) {
+				this.log.warn(`global.messages external write parse error: ${(e as Error).message}`);
+			}
+			return;
 		}
 
 		// Rolladen: resetManual button → exit manual mode and re-evaluate shutter state
