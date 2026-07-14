@@ -86,7 +86,7 @@ interface ShutterRoomEntry {
 	sunsetTimer:        ReturnType<typeof setTimeout> | null;
 }
 /** After this many ms without a trigger-DP update the sensor is considered unreachable. */
-const UNREACH_TIMEOUT_MS = 1_800_000; // 30 minutes
+const UNREACH_TIMEOUT_MS = 3_600_000; // 60 minutes
 
 /** Default timeout for messages in seconds. */
 const MSG_DEFAULT_TIMEOUT_S = 600;
@@ -514,6 +514,9 @@ class Faut extends utils.Adapter {
 			this.setStateAsync(unreachRelId, { val: true, ack: true }).catch(e => {
 				this.log.error(`Unreach timer failed for ${unreachRelId}: ${(e as Error).message}`);
 			});
+			// Post message when sensor becomes unreachable
+			const label = this.labelFor(unreachRelId);
+			this.postMessage(`unreach.${unreachRelId}`, 'warning', `${label}: Unreachable`, true, 0);
 		}, delayMs);
 		this.unreachTimers.set(unreachRelId, timer);
 	}
@@ -2113,8 +2116,24 @@ class Faut extends utils.Adapter {
 			} catch { /* state object not yet created – proceed */ }
 		}
 
+		// Get current state for change detection (and message posting)
+		let prevState: string | null = null;
+		try {
+			const cur = await this.getStateAsync(`${rolladenRelId}.state`);
+			prevState = typeof cur?.val === 'string' ? cur.val : null;
+		} catch { /* ignore */ }
+
 		await this.setStateAsync(`${rolladenRelId}.state`, { val: newState, ack: true });
 		this.logShutter(`${this.labelFor(rolladenRelId)}: state → ${newState} [${reason}]`);
+
+		// Post message when entering sunblock/heatblock
+		const label = this.labelFor(rolladenRelId);
+		if (newState === 'sunblock' && prevState !== 'sunblock') {
+			this.postMessage(`shutter.${rolladenRelId}.sunblock`, 'info', `${label}: Sunblock activated`, false, 1200);
+		}
+		if (newState === 'heatblock' && prevState !== 'heatblock') {
+			this.postMessage(`shutter.${rolladenRelId}.heatblock`, 'info', `${label}: Heatblock activated`, false, 1200);
+		}
 
 		const pos = this.getShutterTargetPosition(rolladenRelId, newState);
 		if (pos === null) return; // sunblock/heatblock handled later; manual = no-op
@@ -2682,20 +2701,38 @@ class Faut extends utils.Adapter {
 			const lowBatRelId = this.dpToLowBatMap.get(id)!;
 			const cur    = this.lowBatValues.get(lowBatRelId) ?? false;
 			const newVal = this.computeLowBat(state.val, cur);
+			const changed = cur !== newVal;
 			this.lowBatValues.set(lowBatRelId, newVal);
 			this.setStateAsync(lowBatRelId, { val: newVal, ack: true }).catch(e => {
 				this.log.error(`LowBat update failed for ${lowBatRelId}: ${(e as Error).message}`);
 			});
+			// Post message on state change
+			if (changed) {
+				const label = this.labelFor(lowBatRelId);
+				if (newVal) {
+					this.postMessage(`lowbat.${lowBatRelId}`, 'warning', `${label}: Low battery`, false);
+				} else {
+					this.removeMessage(`lowbat.${lowBatRelId}`);
+					this.postMessage(`lowbat.${lowBatRelId}.restored`, 'info', `${label}: Battery OK`, false, 600);
+				}
+			}
 		}
 
 		// Unreach: trigger DP updated → sensor is reachable again; restart timer
 		if (this.dpToUnreachMap.has(id)) {
 			const unreachRelId = this.dpToUnreachMap.get(id)!;
+			const wasUnreach = (this.unreachTimers.get(unreachRelId) ?? null) !== null;
 			const existing = this.unreachTimers.get(unreachRelId);
 			if (existing !== undefined) clearTimeout(existing);
 			this.setStateAsync(unreachRelId, { val: false, ack: true }).catch(e => {
 				this.log.error(`Unreach clear failed for ${unreachRelId}: ${(e as Error).message}`);
 			});
+			// Post message if sensor was unreachable and is now back
+			if (wasUnreach) {
+				const label = this.labelFor(unreachRelId);
+				this.removeMessage(`unreach.${unreachRelId}`);
+				this.postMessage(`unreach.${unreachRelId}.restored`, 'info', `${label}: ${I18n.t('Reachable again')}`, false, 600);
+			}
 			this.startUnreachTimer(unreachRelId, UNREACH_TIMEOUT_MS);
 		}
 
