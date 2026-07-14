@@ -239,18 +239,16 @@ export default class TabMessages extends React.Component<TabMessagesProps, TabMe
                 {/* DialogSelectID for Alexa group */}
                 {this.state.alexaSelectOpen && (
                     <DialogSelectID
-                        key="alexa-group-select"
                         socket={this.props.socket}
-                        dialogName="alexaGroupSelect"
+                        theme={this.props.theme!}
                         title={I18n.t('Alexa Multiroom Group')}
                         selected={alexaGruppe}
-                        statesOnly={false}
-                        onOk={(id: string | string[]) => {
-                            const selected = Array.isArray(id) ? id[0] : id;
-                            if (selected) this.props.onChange('alexaMultiroomGruppe', selected);
+                        types={['channel', 'device', 'folder'] as any}
+                        onClose={() => this.setState({ alexaSelectOpen: false })}
+                        onOk={(id) => {
+                            if (typeof id === 'string' && id) this.props.onChange('alexaMultiroomGruppe', id);
                             this.setState({ alexaSelectOpen: false });
                         }}
-                        onClose={() => this.setState({ alexaSelectOpen: false })}
                     />
                 )}
             </Box>

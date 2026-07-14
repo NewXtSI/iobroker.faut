@@ -153,6 +153,7 @@ export default class App extends GenericApp<GenericAppProps, AppState> {
                                     key="messages"
                                     common={this.common!}
                                     socket={this.socket}
+                                    theme={this.state.theme}
                                     native={this.state.native}
                                     instance={this.instance}
                                     adapterName={this.adapterName}
