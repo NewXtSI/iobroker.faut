@@ -40,7 +40,7 @@ const utils = __importStar(require("@iobroker/adapter-core"));
 const SunCalc = __importStar(require("suncalc2"));
 const consumptionTracker_1 = require("./lib/consumptionTracker");
 /** After this many ms without a trigger-DP update the sensor is considered unreachable. */
-const UNREACH_TIMEOUT_MS = 1_800_000; // 30 minutes
+const UNREACH_TIMEOUT_MS = 3_600_000; // 60 minutes
 /** Default timeout for messages in seconds. */
 const MSG_DEFAULT_TIMEOUT_S = 600;
 class Faut extends utils.Adapter {
@@ -366,16 +366,21 @@ class Faut extends utils.Adapter {
         for (const node of nodes) {
             const relId = prefix ? `${prefix}.${node.id}` : node.id;
             const cfg = node.config ?? {};
-            if (cfg.batteriebetrieben && cfg.dpBatterie)
+            if (cfg.batteriebetrieben && cfg.dpBatterie) {
                 this.dpToLowBatMap.set(cfg.dpBatterie, `${relId}.lowBat`);
-            if (cfg.erreichbarkeit && cfg.dpErreichbarkeit)
+                this.log.debug(`Mapped lowBat: ${cfg.dpBatterie} → ${relId}.lowBat`);
+            }
+            if (cfg.erreichbarkeit && cfg.dpErreichbarkeit) {
                 this.dpToUnreachMap.set(cfg.dpErreichbarkeit, `${relId}.unreach`);
+                this.log.debug(`Mapped unreach: ${cfg.dpErreichbarkeit} → ${relId}.unreach`);
+            }
             if (node.children?.length)
                 this.collectBatteryAndUnreachMappings(node.children, relId);
         }
     }
     /** Subscribes to battery/trigger DPs and sets initial lowBat/unreach states. */
     async setupBatteryAndUnreach() {
+        this.log.info(`Battery/Unreach setup: lowBat=${this.dpToLowBatMap.size}, unreach=${this.dpToUnreachMap.size}`);
         // ---- LowBat ----
         for (const [dpId, lowBatRelId] of this.dpToLowBatMap) {
             this.subscribeForeignStates(dpId);
@@ -398,14 +403,20 @@ class Faut extends utils.Adapter {
             try {
                 const state = await this.getForeignStateAsync(dpId);
                 if (!state) {
+                    this.log.info(`Unreach (startup): ${unreachRelId} – no state found for trigger DP ${dpId}`);
                     await this.setStateAsync(unreachRelId, { val: true, ack: true });
                 }
                 else {
                     const elapsed = Date.now() - (state.ts ?? 0);
                     if (elapsed >= UNREACH_TIMEOUT_MS) {
+                        this.log.info(`Unreach (startup): ${unreachRelId} – last update ${(elapsed / 60_000).toFixed(0)} min ago (timeout=${(UNREACH_TIMEOUT_MS / 60_000).toFixed(0)} min)`);
                         await this.setStateAsync(unreachRelId, { val: true, ack: true });
+                        // Post message on startup if already unreachable
+                        const label = this.labelFor(unreachRelId);
+                        this.postMessage(`unreach.${unreachRelId}`, 'warning', `${label}: Unreachable`, true, 0);
                     }
                     else {
+                        this.log.debug(`Unreach (startup): ${unreachRelId} – last update ${(elapsed / 1000).toFixed(0)}s ago, starting timer for ${((UNREACH_TIMEOUT_MS - elapsed) / 60_000).toFixed(0)} min`);
                         await this.setStateAsync(unreachRelId, { val: false, ack: true });
                         this.startUnreachTimer(unreachRelId, UNREACH_TIMEOUT_MS - elapsed);
                     }
@@ -434,11 +445,22 @@ class Faut extends utils.Adapter {
     }
     /** Starts (or restarts) an unreach timer for the given own-state relId. */
     startUnreachTimer(unreachRelId, delayMs) {
+        this.log.info(`Unreach timer started for ${unreachRelId}: ${(delayMs / 60_000).toFixed(0)} min`);
         const timer = setTimeout(() => {
+            this.log.warn(`>>> UNREACH TIMER FIRED for ${unreachRelId}!`);
             this.unreachTimers.delete(unreachRelId);
             this.setStateAsync(unreachRelId, { val: true, ack: true }).catch(e => {
                 this.log.error(`Unreach timer failed for ${unreachRelId}: ${e.message}`);
             });
+            // Post message when sensor becomes unreachable
+            const label = this.labelFor(unreachRelId);
+            this.log.warn(`Unreach label for ${unreachRelId}: "${label}"`);
+            if (label) {
+                this.postMessage(`unreach.${unreachRelId}`, 'warning', `${label}: Unreachable`, true, 0);
+            }
+            else {
+                this.log.error(`Failed to get label for unreachable sensor ${unreachRelId}`);
+            }
         }, delayMs);
         this.unreachTimers.set(unreachRelId, timer);
     }
@@ -1942,6 +1964,7 @@ class Faut extends utils.Adapter {
      * Skips if the shutter is in manual mode.
      */
     async applyShutterState(rolladenRelId, newState, reason, forceOverrideManual = false) {
+        this.log.debug(`applyShutterState called: relId=${rolladenRelId} newState=${newState}`);
         // Check if this actuator is enabled
         if (this.rolladenPosCfg.get(rolladenRelId)?.aktiviert === false) {
             this.logShutter(`${this.labelFor(rolladenRelId)}: deaktiviert – ignoring [${reason}]`);
@@ -1958,8 +1981,26 @@ class Faut extends utils.Adapter {
             }
             catch { /* state object not yet created – proceed */ }
         }
+        // Get current state for change detection (and message posting)
+        let prevState = null;
+        try {
+            const cur = await this.getStateAsync(`${rolladenRelId}.state`);
+            prevState = typeof cur?.val === 'string' ? cur.val : null;
+        }
+        catch { /* ignore */ }
         await this.setStateAsync(`${rolladenRelId}.state`, { val: newState, ack: true });
         this.logShutter(`${this.labelFor(rolladenRelId)}: state → ${newState} [${reason}]`);
+        // Post message when entering sunblock/heatblock
+        const label = this.labelFor(rolladenRelId);
+        this.log.debug(`Checking message post: newState=${newState} prevState=${prevState}`);
+        if (newState === 'sunblock' && prevState !== 'sunblock') {
+            this.log.info(`>>> SUNBLOCK MESSAGE: ${label}`);
+            this.postMessage(`shutter.${rolladenRelId}.sunblock`, 'info', `${label}: Sunblock activated`, false, 1200);
+        }
+        if (newState === 'heatblock' && prevState !== 'heatblock') {
+            this.log.info(`>>> HEATBLOCK MESSAGE: ${label}`);
+            this.postMessage(`shutter.${rolladenRelId}.heatblock`, 'info', `${label}: Heatblock activated`, false, 1200);
+        }
         const pos = this.getShutterTargetPosition(rolladenRelId, newState);
         if (pos === null)
             return; // sunblock/heatblock handled later; manual = no-op
@@ -2018,6 +2059,7 @@ class Faut extends utils.Adapter {
      *  heatblock, !hot, !sunDir                    → open
      */
     async evaluateShutterRoom(room) {
+        this.log.debug(`evaluateShutterRoom: ${this.labelFor(room.relId)}`);
         const isNightMode = !!(await this.getStateAsync('global.nightMode'))?.val;
         if (isNightMode)
             return; // night mode handler already closed shutters
@@ -2340,6 +2382,7 @@ class Faut extends utils.Adapter {
      * it is replaced. Persists to global.messages and sends a Telegram notification.
      */
     postMessage(source, severity, message, needAck = false, msgTimeout = MSG_DEFAULT_TIMEOUT_S) {
+        this.log.info(`postMessage: source=${source} severity=${severity} message=${message} needAck=${needAck} timeout=${msgTimeout}`);
         // Replace existing message from same source
         this.messages = this.messages.filter(m => m.source !== source);
         const msg = {
@@ -2349,6 +2392,7 @@ class Faut extends utils.Adapter {
             acked: false,
         };
         this.messages.push(msg);
+        this.log.info(`Total messages now: ${this.messages.length}`);
         this.saveMessages().catch(e => this.log.error(`saveMessages failed: ${e.message}`));
         this.sendTelegramMessage(msg).catch(e => this.log.warn(`Telegram send failed: ${e.message}`));
     }
@@ -2408,6 +2452,7 @@ class Faut extends utils.Adapter {
     }
     /** Persists messages to global.messages state. */
     async saveMessages() {
+        this.log.debug(`saveMessages: persisting ${this.messages.length} messages to state`);
         await this.setStateAsync('global.messages', { val: JSON.stringify(this.messages), ack: true });
     }
     /** Sends a Telegram notification for a new message. */
@@ -2491,20 +2536,40 @@ class Faut extends utils.Adapter {
             const lowBatRelId = this.dpToLowBatMap.get(id);
             const cur = this.lowBatValues.get(lowBatRelId) ?? false;
             const newVal = this.computeLowBat(state.val, cur);
+            const changed = cur !== newVal;
             this.lowBatValues.set(lowBatRelId, newVal);
             this.setStateAsync(lowBatRelId, { val: newVal, ack: true }).catch(e => {
                 this.log.error(`LowBat update failed for ${lowBatRelId}: ${e.message}`);
             });
+            // Post message on state change
+            if (changed) {
+                const label = this.labelFor(lowBatRelId);
+                if (newVal) {
+                    this.postMessage(`lowbat.${lowBatRelId}`, 'warning', `${label}: Low battery`, false);
+                }
+                else {
+                    this.removeMessage(`lowbat.${lowBatRelId}`);
+                    this.postMessage(`lowbat.${lowBatRelId}.restored`, 'info', `${label}: Battery OK`, false, 600);
+                }
+            }
         }
         // Unreach: trigger DP updated → sensor is reachable again; restart timer
         if (this.dpToUnreachMap.has(id)) {
             const unreachRelId = this.dpToUnreachMap.get(id);
+            this.log.debug(`Unreach trigger DP updated: ${id} → ${unreachRelId}`);
+            const wasUnreach = (this.unreachTimers.get(unreachRelId) ?? null) !== null;
             const existing = this.unreachTimers.get(unreachRelId);
             if (existing !== undefined)
                 clearTimeout(existing);
             this.setStateAsync(unreachRelId, { val: false, ack: true }).catch(e => {
                 this.log.error(`Unreach clear failed for ${unreachRelId}: ${e.message}`);
             });
+            // Post message if sensor was unreachable and is now back
+            if (wasUnreach) {
+                const label = this.labelFor(unreachRelId);
+                this.removeMessage(`unreach.${unreachRelId}`);
+                this.postMessage(`unreach.${unreachRelId}.restored`, 'info', `${label}: Reachable again`, false, 600);
+            }
             this.startUnreachTimer(unreachRelId, UNREACH_TIMEOUT_MS);
         }
         // Extended shutter logging: only DPs relevant to shutter control (position + night mode)
