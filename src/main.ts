@@ -5,6 +5,7 @@
 import * as utils from '@iobroker/adapter-core';
 import * as SunCalc from 'suncalc2';
 import { type FautNodeConfig, type FautTreeNode, type LampeSceneConfig, type LampeSceneAction } from './lib/treeTypes';
+import { i18n } from './i18n';
 import {
 	type TrackerAnchors,
 	MONTH_LABELS,
@@ -259,6 +260,9 @@ class Faut extends utils.Adapter {
 
 	private async onReady(): Promise<void> {
 		this.log.info('Faut adapter started');
+		// Initialize i18n with system language
+		const systemLang = (this.systemConfig as any)?.common?.language as string | undefined;
+		i18n.init(systemLang);
 		this.setState('info.connection', { val: true, ack: true });
 		await this.migrateConfig();
 
@@ -499,7 +503,7 @@ class Faut extends utils.Adapter {
 						// Post message on startup if already unreachable
 						const baseRelId = unreachRelId.endsWith('.unreach') ? unreachRelId.slice(0, -8) : unreachRelId;
 						const label = this.labelFor(baseRelId);
-						this.postMessage(`unreach.${unreachRelId}`, 'warning', `${label}: Unreachable`, true, 0);
+						this.postMessage(`unreach.${unreachRelId}`, 'warning', `${label}: ${i18n.t('Unreachable')}`, true, 0);
 					} else {
 						await this.setStateAsync(unreachRelId, { val: false, ack: true });
 						this.unreachValues.set(unreachRelId, false);
@@ -536,10 +540,10 @@ class Faut extends utils.Adapter {
 			const baseRelId = unreachRelId.endsWith('.unreach') ? unreachRelId.slice(0, -8) : unreachRelId; // Remove '.unreach' suffix
 			const label = this.labelFor(baseRelId);
 			if (label && label !== baseRelId) {
-				this.postMessage(`unreach.${unreachRelId}`, 'warning', `${label}: Unreachable`, true, 0);
+				this.postMessage(`unreach.${unreachRelId}`, 'warning', `${label}: ${i18n.t('Unreachable')}`, true, 0);
 			} else {
 				this.log.error(`Failed to get label for unreachable sensor ${unreachRelId} (baseRelId=${baseRelId})`);
-				this.postMessage(`unreach.${unreachRelId}`, 'warning', `[${unreachRelId}]: Unreachable`, true, 0);
+				this.postMessage(`unreach.${unreachRelId}`, 'warning', `[${unreachRelId}]: ${i18n.t('Unreachable')}`, true, 0);
 			}
 		}, delayMs);
 		this.unreachTimers.set(unreachRelId, timer);
@@ -2153,10 +2157,10 @@ class Faut extends utils.Adapter {
 		// Post message when entering sunblock/heatblock
 		const label = this.labelFor(rolladenRelId);
 		if (newState === 'sunblock' && prevState !== 'sunblock') {
-			this.postMessage(`shutter.${rolladenRelId}.sunblock`, 'info', `${label}: Sunblock activated`, false, 1200);
+			this.postMessage(`shutter.${rolladenRelId}.sunblock`, 'info', `${label}: ${i18n.t('Sunblock activated')}`, false, 1200);
 		}
 		if (newState === 'heatblock' && prevState !== 'heatblock') {
-			this.postMessage(`shutter.${rolladenRelId}.heatblock`, 'info', `${label}: Heatblock activated`, false, 1200);
+			this.postMessage(`shutter.${rolladenRelId}.heatblock`, 'info', `${label}: ${i18n.t('Heatblock activated')}`, false, 1200);
 		}
 
 		const pos = this.getShutterTargetPosition(rolladenRelId, newState);
@@ -2745,10 +2749,10 @@ class Faut extends utils.Adapter {
 				const baseRelId = lowBatRelId.endsWith('.lowBat') ? lowBatRelId.slice(0, -7) : lowBatRelId;
 				const label = this.labelFor(baseRelId);
 				if (newVal) {
-					this.postMessage(`lowbat.${lowBatRelId}`, 'warning', `${label}: Low battery`, false);
+					this.postMessage(`lowbat.${lowBatRelId}`, 'warning', `${label}: ${i18n.t('Low battery')}`, false);
 				} else {
 					this.removeMessage(`lowbat.${lowBatRelId}`);
-					this.postMessage(`lowbat.${lowBatRelId}.restored`, 'info', `${label}: Battery OK`, false, 600);
+					this.postMessage(`lowbat.${lowBatRelId}.restored`, 'info', `${label}: ${i18n.t('Battery OK')}`, false, 600);
 				}
 			}
 		}
@@ -2769,9 +2773,9 @@ class Faut extends utils.Adapter {
 				const label = this.labelFor(baseRelId);
 				this.removeMessage(`unreach.${unreachRelId}`);
 				if (label && label !== baseRelId) {
-					this.postMessage(`unreach.${unreachRelId}.restored`, 'info', `${label}: Reachable again`, false, 600);
+					this.postMessage(`unreach.${unreachRelId}.restored`, 'info', `${label}: ${i18n.t('Reachable again')}`, false, 600);
 				} else {
-					this.postMessage(`unreach.${unreachRelId}.restored`, 'info', `[${unreachRelId}]: Reachable again`, false, 600);
+					this.postMessage(`unreach.${unreachRelId}.restored`, 'info', `[${unreachRelId}]: ${i18n.t('Reachable again')}`, false, 600);
 				}
 			}
 			this.startUnreachTimer(unreachRelId, UNREACH_TIMEOUT_MS);

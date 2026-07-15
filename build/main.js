@@ -38,6 +38,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 const utils = __importStar(require("@iobroker/adapter-core"));
 const SunCalc = __importStar(require("suncalc2"));
+const i18n_1 = require("./i18n");
 const consumptionTracker_1 = require("./lib/consumptionTracker");
 /** After this many ms without a trigger-DP update the sensor is considered unreachable. */
 const UNREACH_TIMEOUT_MS = 3_600_000; // 60 minutes
@@ -193,6 +194,9 @@ class Faut extends utils.Adapter {
     }
     async onReady() {
         this.log.info('Faut adapter started');
+        // Initialize i18n with system language
+        const systemLang = this.systemConfig?.common?.language;
+        i18n_1.i18n.init(systemLang);
         this.setState('info.connection', { val: true, ack: true });
         await this.migrateConfig();
         const flags = [
@@ -416,7 +420,7 @@ class Faut extends utils.Adapter {
                         // Post message on startup if already unreachable
                         const baseRelId = unreachRelId.endsWith('.unreach') ? unreachRelId.slice(0, -8) : unreachRelId;
                         const label = this.labelFor(baseRelId);
-                        this.postMessage(`unreach.${unreachRelId}`, 'warning', `${label}: Unreachable`, true, 0);
+                        this.postMessage(`unreach.${unreachRelId}`, 'warning', `${label}: ${i18n_1.i18n.t('Unreachable')}`, true, 0);
                     }
                     else {
                         await this.setStateAsync(unreachRelId, { val: false, ack: true });
@@ -458,11 +462,11 @@ class Faut extends utils.Adapter {
             const baseRelId = unreachRelId.endsWith('.unreach') ? unreachRelId.slice(0, -8) : unreachRelId; // Remove '.unreach' suffix
             const label = this.labelFor(baseRelId);
             if (label && label !== baseRelId) {
-                this.postMessage(`unreach.${unreachRelId}`, 'warning', `${label}: Unreachable`, true, 0);
+                this.postMessage(`unreach.${unreachRelId}`, 'warning', `${label}: ${i18n_1.i18n.t('Unreachable')}`, true, 0);
             }
             else {
                 this.log.error(`Failed to get label for unreachable sensor ${unreachRelId} (baseRelId=${baseRelId})`);
-                this.postMessage(`unreach.${unreachRelId}`, 'warning', `[${unreachRelId}]: Unreachable`, true, 0);
+                this.postMessage(`unreach.${unreachRelId}`, 'warning', `[${unreachRelId}]: ${i18n_1.i18n.t('Unreachable')}`, true, 0);
             }
         }, delayMs);
         this.unreachTimers.set(unreachRelId, timer);
@@ -1995,10 +1999,10 @@ class Faut extends utils.Adapter {
         // Post message when entering sunblock/heatblock
         const label = this.labelFor(rolladenRelId);
         if (newState === 'sunblock' && prevState !== 'sunblock') {
-            this.postMessage(`shutter.${rolladenRelId}.sunblock`, 'info', `${label}: Sunblock activated`, false, 1200);
+            this.postMessage(`shutter.${rolladenRelId}.sunblock`, 'info', `${label}: ${i18n_1.i18n.t('Sunblock activated')}`, false, 1200);
         }
         if (newState === 'heatblock' && prevState !== 'heatblock') {
-            this.postMessage(`shutter.${rolladenRelId}.heatblock`, 'info', `${label}: Heatblock activated`, false, 1200);
+            this.postMessage(`shutter.${rolladenRelId}.heatblock`, 'info', `${label}: ${i18n_1.i18n.t('Heatblock activated')}`, false, 1200);
         }
         const pos = this.getShutterTargetPosition(rolladenRelId, newState);
         if (pos === null)
@@ -2553,11 +2557,11 @@ class Faut extends utils.Adapter {
                 const baseRelId = lowBatRelId.endsWith('.lowBat') ? lowBatRelId.slice(0, -7) : lowBatRelId;
                 const label = this.labelFor(baseRelId);
                 if (newVal) {
-                    this.postMessage(`lowbat.${lowBatRelId}`, 'warning', `${label}: Low battery`, false);
+                    this.postMessage(`lowbat.${lowBatRelId}`, 'warning', `${label}: ${i18n_1.i18n.t('Low battery')}`, false);
                 }
                 else {
                     this.removeMessage(`lowbat.${lowBatRelId}`);
-                    this.postMessage(`lowbat.${lowBatRelId}.restored`, 'info', `${label}: Battery OK`, false, 600);
+                    this.postMessage(`lowbat.${lowBatRelId}.restored`, 'info', `${label}: ${i18n_1.i18n.t('Battery OK')}`, false, 600);
                 }
             }
         }
@@ -2578,10 +2582,10 @@ class Faut extends utils.Adapter {
                 const label = this.labelFor(baseRelId);
                 this.removeMessage(`unreach.${unreachRelId}`);
                 if (label && label !== baseRelId) {
-                    this.postMessage(`unreach.${unreachRelId}.restored`, 'info', `${label}: Reachable again`, false, 600);
+                    this.postMessage(`unreach.${unreachRelId}.restored`, 'info', `${label}: ${i18n_1.i18n.t('Reachable again')}`, false, 600);
                 }
                 else {
-                    this.postMessage(`unreach.${unreachRelId}.restored`, 'info', `[${unreachRelId}]: Reachable again`, false, 600);
+                    this.postMessage(`unreach.${unreachRelId}.restored`, 'info', `[${unreachRelId}]: ${i18n_1.i18n.t('Reachable again')}`, false, 600);
                 }
             }
             this.startUnreachTimer(unreachRelId, UNREACH_TIMEOUT_MS);
