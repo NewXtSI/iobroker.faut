@@ -196,7 +196,9 @@ class Faut extends utils.Adapter {
         this.log.info('Faut adapter started');
         // Initialize i18n with system language
         const systemLang = this.systemConfig?.common?.language;
+        this.log.info(`System language detected: "${systemLang}"`);
         i18n_1.i18n.init(systemLang);
+        this.log.info(`i18n initialized to language mode`);
         this.setState('info.connection', { val: true, ack: true });
         await this.migrateConfig();
         const flags = [
