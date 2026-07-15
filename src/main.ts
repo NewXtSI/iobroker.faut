@@ -2099,6 +2099,7 @@ class Faut extends utils.Adapter {
 	 * Skips if the shutter is in manual mode.
 	 */
 	private async applyShutterState(rolladenRelId: string, newState: string, reason: string, forceOverrideManual = false): Promise<void> {
+		this.log.debug(`applyShutterState called: relId=${rolladenRelId} newState=${newState}`);
 		// Check if this actuator is enabled
 		if (this.rolladenPosCfg.get(rolladenRelId)?.aktiviert === false) {
 			this.logShutter(`${this.labelFor(rolladenRelId)}: deaktiviert – ignoring [${reason}]`);
@@ -2128,10 +2129,13 @@ class Faut extends utils.Adapter {
 
 		// Post message when entering sunblock/heatblock
 		const label = this.labelFor(rolladenRelId);
+		this.log.debug(`Checking message post: newState=${newState} prevState=${prevState}`);
 		if (newState === 'sunblock' && prevState !== 'sunblock') {
+			this.log.info(`>>> SUNBLOCK MESSAGE: ${label}`);
 			this.postMessage(`shutter.${rolladenRelId}.sunblock`, 'info', `${label}: Sunblock activated`, false, 1200);
 		}
 		if (newState === 'heatblock' && prevState !== 'heatblock') {
+			this.log.info(`>>> HEATBLOCK MESSAGE: ${label}`);
 			this.postMessage(`shutter.${rolladenRelId}.heatblock`, 'info', `${label}: Heatblock activated`, false, 1200);
 		}
 
@@ -2196,6 +2200,7 @@ class Faut extends utils.Adapter {
 	 *  heatblock, !hot, !sunDir                    → open
 	 */
 	private async evaluateShutterRoom(room: ShutterRoomEntry): Promise<void> {
+		this.log.debug(`evaluateShutterRoom: ${this.labelFor(room.relId)}`);
 		const isNightMode = !!(await this.getStateAsync('global.nightMode'))?.val;
 		if (isNightMode) return; // night mode handler already closed shutters
 
@@ -2550,6 +2555,7 @@ class Faut extends utils.Adapter {
 		needAck     = false,
 		msgTimeout  = MSG_DEFAULT_TIMEOUT_S,
 	): void {
+		this.log.info(`postMessage: source=${source} severity=${severity} message=${message} needAck=${needAck} timeout=${msgTimeout}`);
 		// Replace existing message from same source
 		this.messages = this.messages.filter(m => m.source !== source);
 		const msg: FautMessage = {
@@ -2559,6 +2565,7 @@ class Faut extends utils.Adapter {
 			acked: false,
 		};
 		this.messages.push(msg);
+		this.log.info(`Total messages now: ${this.messages.length}`);
 		this.saveMessages().catch(e => this.log.error(`saveMessages failed: ${(e as Error).message}`));
 		this.sendTelegramMessage(msg).catch(e => this.log.warn(`Telegram send failed: ${(e as Error).message}`));
 	}
@@ -2622,6 +2629,7 @@ class Faut extends utils.Adapter {
 
 	/** Persists messages to global.messages state. */
 	private async saveMessages(): Promise<void> {
+		this.log.debug(`saveMessages: persisting ${this.messages.length} messages to state`);
 		await this.setStateAsync('global.messages', { val: JSON.stringify(this.messages), ack: true });
 	}
 
@@ -2731,7 +2739,7 @@ class Faut extends utils.Adapter {
 			if (wasUnreach) {
 				const label = this.labelFor(unreachRelId);
 				this.removeMessage(`unreach.${unreachRelId}`);
-				this.postMessage(`unreach.${unreachRelId}.restored`, 'info', `${label}: ${I18n.t('Reachable again')}`, false, 600);
+				this.postMessage(`unreach.${unreachRelId}.restored`, 'info', `${label}: Reachable again`, false, 600);
 			}
 			this.startUnreachTimer(unreachRelId, UNREACH_TIMEOUT_MS);
 		}
