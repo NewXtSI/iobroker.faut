@@ -66,6 +66,8 @@ class Faut extends utils.Adapter {
     lowBatValues = new Map();
     /** Maps a trigger DP ID to the own unreach state relId. */
     dpToUnreachMap = new Map();
+    /** Tracks the current unreach boolean per unreach-state relId (for change detection). */
+    unreachValues = new Map();
     /** Active unreach timers, keyed by own unreach-state relId. */
     unreachTimers = new Map();
     /** RelIds of all Sonne nodes (for sun state updates). */
@@ -405,12 +407,14 @@ class Faut extends utils.Adapter {
                 if (!state) {
                     this.log.info(`Unreach (startup): ${unreachRelId} – no state found for trigger DP ${dpId}`);
                     await this.setStateAsync(unreachRelId, { val: true, ack: true });
+                    this.unreachValues.set(unreachRelId, true);
                 }
                 else {
                     const elapsed = Date.now() - (state.ts ?? 0);
                     if (elapsed >= UNREACH_TIMEOUT_MS) {
                         this.log.info(`Unreach (startup): ${unreachRelId} – last update ${(elapsed / 60_000).toFixed(0)} min ago (timeout=${(UNREACH_TIMEOUT_MS / 60_000).toFixed(0)} min)`);
                         await this.setStateAsync(unreachRelId, { val: true, ack: true });
+                        this.unreachValues.set(unreachRelId, true);
                         // Post message on startup if already unreachable
                         const label = this.labelFor(unreachRelId);
                         this.postMessage(`unreach.${unreachRelId}`, 'warning', `${label}: Unreachable`, true, 0);
@@ -418,6 +422,7 @@ class Faut extends utils.Adapter {
                     else {
                         this.log.debug(`Unreach (startup): ${unreachRelId} – last update ${(elapsed / 1000).toFixed(0)}s ago, starting timer for ${((UNREACH_TIMEOUT_MS - elapsed) / 60_000).toFixed(0)} min`);
                         await this.setStateAsync(unreachRelId, { val: false, ack: true });
+                        this.unreachValues.set(unreachRelId, false);
                         this.startUnreachTimer(unreachRelId, UNREACH_TIMEOUT_MS - elapsed);
                     }
                 }
@@ -452,6 +457,7 @@ class Faut extends utils.Adapter {
             this.setStateAsync(unreachRelId, { val: true, ack: true }).catch(e => {
                 this.log.error(`Unreach timer failed for ${unreachRelId}: ${e.message}`);
             });
+            this.unreachValues.set(unreachRelId, true);
             // Post message when sensor becomes unreachable
             const label = this.labelFor(unreachRelId);
             this.log.warn(`Unreach label for ${unreachRelId}: "${label}"`);
@@ -2557,13 +2563,14 @@ class Faut extends utils.Adapter {
         if (this.dpToUnreachMap.has(id)) {
             const unreachRelId = this.dpToUnreachMap.get(id);
             this.log.debug(`Unreach trigger DP updated: ${id} → ${unreachRelId}`);
-            const wasUnreach = (this.unreachTimers.get(unreachRelId) ?? null) !== null;
+            const wasUnreach = this.unreachValues.get(unreachRelId) ?? false;
             const existing = this.unreachTimers.get(unreachRelId);
             if (existing !== undefined)
                 clearTimeout(existing);
             this.setStateAsync(unreachRelId, { val: false, ack: true }).catch(e => {
                 this.log.error(`Unreach clear failed for ${unreachRelId}: ${e.message}`);
             });
+            this.unreachValues.set(unreachRelId, false);
             // Post message if sensor was unreachable and is now back
             if (wasUnreach) {
                 const label = this.labelFor(unreachRelId);
