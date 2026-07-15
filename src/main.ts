@@ -479,12 +479,18 @@ class Faut extends utils.Adapter {
 			try {
 				const state = await this.getForeignStateAsync(dpId);
 				if (!state) {
+					this.log.info(`Unreach (startup): ${unreachRelId} – no state found for trigger DP ${dpId}`);
 					await this.setStateAsync(unreachRelId, { val: true, ack: true });
 				} else {
 					const elapsed = Date.now() - (state.ts ?? 0);
 					if (elapsed >= UNREACH_TIMEOUT_MS) {
+						this.log.info(`Unreach (startup): ${unreachRelId} – last update ${(elapsed / 60_000).toFixed(0)} min ago (timeout=${(UNREACH_TIMEOUT_MS / 60_000).toFixed(0)} min)`);
 						await this.setStateAsync(unreachRelId, { val: true, ack: true });
+						// Post message on startup if already unreachable
+						const label = this.labelFor(unreachRelId);
+						this.postMessage(`unreach.${unreachRelId}`, 'warning', `${label}: Unreachable`, true, 0);
 					} else {
+						this.log.debug(`Unreach (startup): ${unreachRelId} – last update ${(elapsed / 1000).toFixed(0)}s ago, starting timer for ${((UNREACH_TIMEOUT_MS - elapsed) / 60_000).toFixed(0)} min`);
 						await this.setStateAsync(unreachRelId, { val: false, ack: true });
 						this.startUnreachTimer(unreachRelId, UNREACH_TIMEOUT_MS - elapsed);
 					}
