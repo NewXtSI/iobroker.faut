@@ -455,11 +455,9 @@ class Faut extends utils.Adapter {
 			const cfg = (node.config as FautNodeConfig | undefined) ?? {};
 			if (cfg.batteriebetrieben && cfg.dpBatterie) {
 				this.dpToLowBatMap.set(cfg.dpBatterie, `${relId}.lowBat`);
-				this.log.debug(`Mapped lowBat: ${cfg.dpBatterie} → ${relId}.lowBat`);
 			}
 			if (cfg.erreichbarkeit && cfg.dpErreichbarkeit) {
 				this.dpToUnreachMap.set(cfg.dpErreichbarkeit, `${relId}.unreach`);
-				this.log.debug(`Mapped unreach: ${cfg.dpErreichbarkeit} → ${relId}.unreach`);
 			}
 			if (node.children?.length) this.collectBatteryAndUnreachMappings(node.children, relId);
 		}
@@ -503,7 +501,6 @@ class Faut extends utils.Adapter {
 						const label = this.labelFor(baseRelId);
 						this.postMessage(`unreach.${unreachRelId}`, 'warning', `${label}: Unreachable`, true, 0);
 					} else {
-						this.log.debug(`Unreach (startup): ${unreachRelId} – last update ${(elapsed / 1000).toFixed(0)}s ago, starting timer for ${((UNREACH_TIMEOUT_MS - elapsed) / 60_000).toFixed(0)} min`);
 						await this.setStateAsync(unreachRelId, { val: false, ack: true });
 						this.unreachValues.set(unreachRelId, false);
 						this.startUnreachTimer(unreachRelId, UNREACH_TIMEOUT_MS - elapsed);
@@ -2126,7 +2123,6 @@ class Faut extends utils.Adapter {
 	 * Skips if the shutter is in manual mode.
 	 */
 	private async applyShutterState(rolladenRelId: string, newState: string, reason: string, forceOverrideManual = false): Promise<void> {
-		this.log.debug(`applyShutterState called: relId=${rolladenRelId} newState=${newState}`);
 		// Check if this actuator is enabled
 		if (this.rolladenPosCfg.get(rolladenRelId)?.aktiviert === false) {
 			this.logShutter(`${this.labelFor(rolladenRelId)}: deaktiviert – ignoring [${reason}]`);
@@ -2224,7 +2220,6 @@ class Faut extends utils.Adapter {
 	 *  heatblock, !hot, !sunDir                    → open
 	 */
 	private async evaluateShutterRoom(room: ShutterRoomEntry): Promise<void> {
-		this.log.debug(`evaluateShutterRoom: ${this.labelFor(room.relId)}`);
 		const isNightMode = !!(await this.getStateAsync('global.nightMode'))?.val;
 		if (isNightMode) return; // night mode handler already closed shutters
 
@@ -2661,7 +2656,6 @@ class Faut extends utils.Adapter {
 
 	/** Persists messages to global.messages state. */
 	private async saveMessages(): Promise<void> {
-		this.log.debug(`saveMessages: persisting ${this.messages.length} messages to state`);
 		await this.setStateAsync('global.messages', { val: JSON.stringify(this.messages), ack: true });
 	}
 
