@@ -194,18 +194,9 @@ class Faut extends utils.Adapter {
     }
     async onReady() {
         this.log.info('Faut adapter started');
-        // Initialize i18n with system language - debug various paths
-        let systemLang;
-        this.log.info(`systemConfig structure: ${JSON.stringify(this.systemConfig)}`);
-        // Try various paths
-        systemLang = this.systemConfig?.language;
-        if (!systemLang)
-            systemLang = this.systemConfig?.common?.language;
-        if (!systemLang) {
-            const systemState = await this.getStateAsync('system.config');
-            systemLang = systemState?.val?.language;
-            this.log.info(`system.config.language: "${systemLang}"`);
-        }
+        // Initialize i18n with system language
+        const sysObj = await this.getForeignObjectAsync('system.config');
+        const systemLang = sysObj?.common?.language;
         this.log.info(`System language detected: "${systemLang}"`);
         i18n_1.i18n.init(systemLang);
         this.setState('info.connection', { val: true, ack: true });
