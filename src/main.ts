@@ -529,9 +529,7 @@ class Faut extends utils.Adapter {
 
 	/** Starts (or restarts) an unreach timer for the given own-state relId. */
 	private startUnreachTimer(unreachRelId: string, delayMs: number): void {
-		this.log.info(`Unreach timer started for ${unreachRelId}: ${(delayMs / 60_000).toFixed(0)} min`);
 		const timer = setTimeout(() => {
-			this.log.warn(`>>> UNREACH TIMER FIRED for ${unreachRelId}!`);
 			this.unreachTimers.delete(unreachRelId);
 			this.setStateAsync(unreachRelId, { val: true, ack: true }).catch(e => {
 				this.log.error(`Unreach timer failed for ${unreachRelId}: ${(e as Error).message}`);
@@ -540,7 +538,6 @@ class Faut extends utils.Adapter {
 			// Post message when sensor becomes unreachable
 			const baseRelId = unreachRelId.endsWith('.unreach') ? unreachRelId.slice(0, -8) : unreachRelId; // Remove '.unreach' suffix
 			const label = this.labelFor(baseRelId);
-			this.log.warn(`Unreach label for ${baseRelId}: "${label}"`);
 			if (label && label !== baseRelId) {
 				this.postMessage(`unreach.${unreachRelId}`, 'warning', `${label}: Unreachable`, true, 0);
 			} else {
@@ -2159,13 +2156,10 @@ class Faut extends utils.Adapter {
 
 		// Post message when entering sunblock/heatblock
 		const label = this.labelFor(rolladenRelId);
-		this.log.debug(`Checking message post: newState=${newState} prevState=${prevState}`);
 		if (newState === 'sunblock' && prevState !== 'sunblock') {
-			this.log.info(`>>> SUNBLOCK MESSAGE: ${label}`);
 			this.postMessage(`shutter.${rolladenRelId}.sunblock`, 'info', `${label}: Sunblock activated`, false, 1200);
 		}
 		if (newState === 'heatblock' && prevState !== 'heatblock') {
-			this.log.info(`>>> HEATBLOCK MESSAGE: ${label}`);
 			this.postMessage(`shutter.${rolladenRelId}.heatblock`, 'info', `${label}: Heatblock activated`, false, 1200);
 		}
 
@@ -2578,6 +2572,14 @@ class Faut extends utils.Adapter {
 	 * Posts a new notification message. If a message with the same source already exists,
 	 * it is replaced. Persists to global.messages and sends a Telegram notification.
 	 */
+	/** Checks if a message should be posted: never repost if already acknowledged. */
+	private shouldPostMessage(source: string): boolean {
+		const existing = this.messages.find(m => m.source === source);
+		if (!existing) return true; // No existing message, OK to post
+		if (existing.acked) return false; // Already acknowledged, don't repost
+		return true; // Existing but not acked, OK to update
+	}
+
 	postMessage(
 		source:     string,
 		severity:   'info' | 'warning' | 'error',
@@ -2585,7 +2587,8 @@ class Faut extends utils.Adapter {
 		needAck     = false,
 		msgTimeout  = MSG_DEFAULT_TIMEOUT_S,
 	): void {
-		this.log.info(`postMessage: source=${source} severity=${severity} message=${message} needAck=${needAck} timeout=${msgTimeout}`);
+		// Don't repost if already acknowledged
+		if (!this.shouldPostMessage(source)) return;
 		// Replace existing message from same source
 		this.messages = this.messages.filter(m => m.source !== source);
 		const msg: FautMessage = {
@@ -2595,7 +2598,6 @@ class Faut extends utils.Adapter {
 			acked: false,
 		};
 		this.messages.push(msg);
-		this.log.info(`Total messages now: ${this.messages.length}`);
 		this.saveMessages().catch(e => this.log.error(`saveMessages failed: ${(e as Error).message}`));
 		this.sendTelegramMessage(msg).catch(e => this.log.warn(`Telegram send failed: ${(e as Error).message}`));
 	}
@@ -2760,7 +2762,6 @@ class Faut extends utils.Adapter {
 		// Unreach: trigger DP updated → sensor is reachable again; restart timer
 		if (this.dpToUnreachMap.has(id)) {
 			const unreachRelId = this.dpToUnreachMap.get(id)!;
-			this.log.debug(`Unreach trigger DP updated: ${id} → ${unreachRelId}`);
 			const wasUnreach = this.unreachValues.get(unreachRelId) ?? false;
 			const existing = this.unreachTimers.get(unreachRelId);
 			if (existing !== undefined) clearTimeout(existing);
