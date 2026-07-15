@@ -451,14 +451,22 @@ class Faut extends utils.Adapter {
 		for (const node of nodes) {
 			const relId = prefix ? `${prefix}.${node.id}` : node.id;
 			const cfg = (node.config as FautNodeConfig | undefined) ?? {};
-			if (cfg.batteriebetrieben && cfg.dpBatterie)       this.dpToLowBatMap.set(cfg.dpBatterie,      `${relId}.lowBat`);
-			if (cfg.erreichbarkeit    && cfg.dpErreichbarkeit) this.dpToUnreachMap.set(cfg.dpErreichbarkeit, `${relId}.unreach`);
+			if (cfg.batteriebetrieben && cfg.dpBatterie) {
+				this.dpToLowBatMap.set(cfg.dpBatterie, `${relId}.lowBat`);
+				this.log.debug(`Mapped lowBat: ${cfg.dpBatterie} → ${relId}.lowBat`);
+			}
+			if (cfg.erreichbarkeit && cfg.dpErreichbarkeit) {
+				this.dpToUnreachMap.set(cfg.dpErreichbarkeit, `${relId}.unreach`);
+				this.log.debug(`Mapped unreach: ${cfg.dpErreichbarkeit} → ${relId}.unreach`);
+			}
 			if (node.children?.length) this.collectBatteryAndUnreachMappings(node.children, relId);
 		}
 	}
 
 	/** Subscribes to battery/trigger DPs and sets initial lowBat/unreach states. */
 	private async setupBatteryAndUnreach(): Promise<void> {
+		this.log.info(`Battery/Unreach setup: lowBat=${this.dpToLowBatMap.size}, unreach=${this.dpToUnreachMap.size}`);
+
 		// ---- LowBat ----
 		for (const [dpId, lowBatRelId] of this.dpToLowBatMap) {
 			this.subscribeForeignStates(dpId);
