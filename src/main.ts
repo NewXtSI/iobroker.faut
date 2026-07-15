@@ -523,14 +523,21 @@ class Faut extends utils.Adapter {
 
 	/** Starts (or restarts) an unreach timer for the given own-state relId. */
 	private startUnreachTimer(unreachRelId: string, delayMs: number): void {
+		this.log.info(`Unreach timer started for ${unreachRelId}: ${(delayMs / 60_000).toFixed(0)} min`);
 		const timer = setTimeout(() => {
+			this.log.warn(`>>> UNREACH TIMER FIRED for ${unreachRelId}!`);
 			this.unreachTimers.delete(unreachRelId);
 			this.setStateAsync(unreachRelId, { val: true, ack: true }).catch(e => {
 				this.log.error(`Unreach timer failed for ${unreachRelId}: ${(e as Error).message}`);
 			});
 			// Post message when sensor becomes unreachable
 			const label = this.labelFor(unreachRelId);
-			this.postMessage(`unreach.${unreachRelId}`, 'warning', `${label}: Unreachable`, true, 0);
+			this.log.warn(`Unreach label for ${unreachRelId}: "${label}"`);
+			if (label) {
+				this.postMessage(`unreach.${unreachRelId}`, 'warning', `${label}: Unreachable`, true, 0);
+			} else {
+				this.log.error(`Failed to get label for unreachable sensor ${unreachRelId}`);
+			}
 		}, delayMs);
 		this.unreachTimers.set(unreachRelId, timer);
 	}
@@ -2743,6 +2750,7 @@ class Faut extends utils.Adapter {
 		// Unreach: trigger DP updated → sensor is reachable again; restart timer
 		if (this.dpToUnreachMap.has(id)) {
 			const unreachRelId = this.dpToUnreachMap.get(id)!;
+			this.log.debug(`Unreach trigger DP updated: ${id} → ${unreachRelId}`);
 			const wasUnreach = (this.unreachTimers.get(unreachRelId) ?? null) !== null;
 			const existing = this.unreachTimers.get(unreachRelId);
 			if (existing !== undefined) clearTimeout(existing);
