@@ -119,5 +119,7 @@
     "Heat protection ΔT (°C)": "Hitzeschutz ΔT (°C)",
     "Leave empty for global setting": "Leer lassen für globale Einstellung",
     "Name bereits vorhanden": "Name bereits vorhanden",
-    "Name darf keinen Punkt enthalten": "Name darf keinen Punkt (.) enthalten"
+    "Name darf keinen Punkt enthalten": "Name darf keinen Punkt (.) enthalten",
+    "Bool Unreach": "Bool Unreach",
+    "Alive State": "Alive State"
 }

@@ -130,6 +130,8 @@ class Faut extends utils.Adapter {
 	private readonly lowBatValues    = new Map<string, boolean>();
 	/** Maps a trigger DP ID to the own unreach state relId. */
 	private readonly dpToUnreachMap  = new Map<string, string>();
+	/** Maps a bool/alive DP ID → { unreachRelId, isAlive }. For DPs that directly signal reachability. */
+	private readonly dpToBoolUnreachMap = new Map<string, { unreachRelId: string; isAlive: boolean }>();
 	/** Tracks the current unreach boolean per unreach-state relId (for change detection). */
 	private readonly unreachValues   = new Map<string, boolean>();
 	/** Active unreach timers, keyed by own unreach-state relId. */
@@ -463,7 +465,14 @@ class Faut extends utils.Adapter {
 				this.dpToLowBatMap.set(cfg.dpBatterie, `${relId}.lowBat`);
 			}
 			if (cfg.erreichbarkeit && cfg.dpErreichbarkeit) {
-				this.dpToUnreachMap.set(cfg.dpErreichbarkeit, `${relId}.unreach`);
+				if (cfg.dpUnreachIsBool) {
+					this.dpToBoolUnreachMap.set(cfg.dpErreichbarkeit, {
+						unreachRelId: `${relId}.unreach`,
+						isAlive: !!(cfg.dpUnreachIsAlive),
+					});
+				} else {
+					this.dpToUnreachMap.set(cfg.dpErreichbarkeit, `${relId}.unreach`);
+				}
 			}
 			if (node.children?.length) this.collectBatteryAndUnreachMappings(node.children, relId);
 		}
@@ -471,7 +480,7 @@ class Faut extends utils.Adapter {
 
 	/** Subscribes to battery/trigger DPs and sets initial lowBat/unreach states. */
 	private async setupBatteryAndUnreach(): Promise<void> {
-		this.log.info(`Battery/Unreach setup: lowBat=${this.dpToLowBatMap.size}, unreach=${this.dpToUnreachMap.size}`);
+		this.log.info(`Battery/Unreach setup: lowBat=${this.dpToLowBatMap.size}, unreach=${this.dpToUnreachMap.size}, boolUnreach=${this.dpToBoolUnreachMap.size}`);
 
 		// ---- LowBat ----
 		for (const [dpId, lowBatRelId] of this.dpToLowBatMap) {
@@ -487,7 +496,26 @@ class Faut extends utils.Adapter {
 			} catch (e) { this.log.warn(`Initial battery read failed for ${dpId}: ${(e as Error).message}`); }
 		}
 
-		// ---- Unreach ----
+		// ---- Bool/Alive Unreach (direct DP value, no timer) ----
+		for (const [dpId, { unreachRelId, isAlive }] of this.dpToBoolUnreachMap) {
+			this.subscribeForeignStates(dpId);
+			try {
+				const state = await this.getForeignStateAsync(dpId);
+				const dpVal = typeof state?.val === 'boolean' ? state.val : (state?.val !== null && state?.val !== undefined ? !!state.val : null);
+				if (dpVal !== null) {
+					const isUnreach = isAlive ? !dpVal : dpVal;
+					this.unreachValues.set(unreachRelId, isUnreach);
+					await this.setStateAsync(unreachRelId, { val: isUnreach, ack: true });
+					if (isUnreach) {
+						const baseRelId = unreachRelId.endsWith('.unreach') ? unreachRelId.slice(0, -8) : unreachRelId;
+						const label = this.labelFor(baseRelId);
+						this.postMessage(`unreach.${unreachRelId}`, 'warning', `${label}: ${i18n.t('Unreachable')}`, true, 0);
+					}
+				}
+			} catch (e) { this.log.warn(`Initial bool-unreach read failed for ${dpId}: ${(e as Error).message}`); }
+		}
+
+		// ---- Unreach (timestamp-based) ----
 		for (const [dpId, unreachRelId] of this.dpToUnreachMap) {
 			this.subscribeForeignStates(dpId);
 			try {
@@ -2762,7 +2790,30 @@ class Faut extends utils.Adapter {
 			}
 		}
 
-		// Unreach: trigger DP updated → sensor is reachable again; restart timer
+		// Bool/Alive Unreach: DP value directly signals reachability
+		if (this.dpToBoolUnreachMap.has(id)) {
+			const { unreachRelId, isAlive } = this.dpToBoolUnreachMap.get(id)!;
+			const dpVal = typeof state.val === 'boolean' ? state.val : (state.val !== null && state.val !== undefined ? !!state.val : null);
+			if (dpVal !== null) {
+				const isUnreach = isAlive ? !dpVal : dpVal;
+				const wasUnreach = this.unreachValues.get(unreachRelId) ?? false;
+				if (isUnreach !== wasUnreach) {
+					this.unreachValues.set(unreachRelId, isUnreach);
+					this.setStateAsync(unreachRelId, { val: isUnreach, ack: true }).catch(e =>
+						this.log.error(`Bool-unreach set failed for ${unreachRelId}: ${(e as Error).message}`));
+					const baseRelId = unreachRelId.endsWith('.unreach') ? unreachRelId.slice(0, -8) : unreachRelId;
+					const label = this.labelFor(baseRelId);
+					if (isUnreach) {
+						this.postMessage(`unreach.${unreachRelId}`, 'warning', `${label}: ${i18n.t('Unreachable')}`, true, 0);
+					} else {
+						this.removeMessage(`unreach.${unreachRelId}`);
+						this.postMessage(`unreach.${unreachRelId}.restored`, 'info', `${label}: ${i18n.t('Reachable again')}`, false, 600);
+					}
+				}
+			}
+		}
+
+		// Unreach (timestamp-based): trigger DP updated → sensor is reachable again; restart timer
 		if (this.dpToUnreachMap.has(id)) {
 			const unreachRelId = this.dpToUnreachMap.get(id)!;
 			const wasUnreach = this.unreachValues.get(unreachRelId) ?? false;

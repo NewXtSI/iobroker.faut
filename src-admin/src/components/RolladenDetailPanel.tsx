@@ -104,13 +104,39 @@ export default function RolladenDetailPanel({ node, socket, theme, onConfigChang
                     label={I18n.t('Reachability')}
                 />
                 {cfg.erreichbarkeit && (
-                    <DpField
-                        label={I18n.t('DP Reachability trigger')}
-                        value={cfg.dpErreichbarkeit ?? ''}
-                        onChange={v => onConfigChange('dpErreichbarkeit', v)}
-                        onSelect={() => openSelect('dpErreichbarkeit')}
-                        sx={{ mt: 1, ml: 4 }}
-                    />
+                    <>
+                        <DpField
+                            label={I18n.t('DP Reachability trigger')}
+                            value={cfg.dpErreichbarkeit ?? ''}
+                            onChange={v => onConfigChange('dpErreichbarkeit', v)}
+                            onSelect={() => openSelect('dpErreichbarkeit')}
+                            sx={{ mt: 1, ml: 4 }}
+                        />
+                        <FormControlLabel
+                            sx={{ ml: 3 }}
+                            control={
+                                <Checkbox
+                                    size="small"
+                                    checked={cfg.dpUnreachIsBool ?? false}
+                                    onChange={e => onConfigChange('dpUnreachIsBool', e.target.checked)}
+                                />
+                            }
+                            label={I18n.t('Bool Unreach')}
+                        />
+                        {cfg.dpUnreachIsBool && (
+                            <FormControlLabel
+                                sx={{ ml: 3 }}
+                                control={
+                                    <Checkbox
+                                        size="small"
+                                        checked={cfg.dpUnreachIsAlive ?? false}
+                                        onChange={e => onConfigChange('dpUnreachIsAlive', e.target.checked)}
+                                    />
+                                }
+                                label={I18n.t('Alive State')}
+                            />
+                        )}
+                    </>
                 )}
             </Box>
 

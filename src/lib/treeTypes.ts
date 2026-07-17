@@ -70,6 +70,8 @@ export interface FautNodeConfig {
     dpBatterie?: string;
     erreichbarkeit?: boolean;
     dpErreichbarkeit?: string;
+    dpUnreachIsBool?: boolean;   // DP value IS the unreach state directly (true = unreachable)
+    dpUnreachIsAlive?: boolean;  // DP is an alive/reachable signal (negated: true = reachable)
     // Raum-specific
     bewegungserkennung?: boolean;
     bewegungsCooldown?: number;
