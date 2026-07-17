@@ -117,5 +117,7 @@
     "Room-specific settings (override global)": "Raumspezifische Einstellungen (überschreiben global)",
     "Glare protection angle (°)": "Blendschutz Winkel (°)",
     "Heat protection ΔT (°C)": "Hitzeschutz ΔT (°C)",
-    "Leave empty for global setting": "Leer lassen für globale Einstellung"
+    "Leave empty for global setting": "Leer lassen für globale Einstellung",
+    "Name bereits vorhanden": "Name bereits vorhanden",
+    "Name darf keinen Punkt enthalten": "Name darf keinen Punkt (.) enthalten"
 }

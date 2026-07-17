@@ -372,7 +372,7 @@ class Faut extends utils.Adapter {
     /** Walks the tree and fills dpToLowBatMap / dpToUnreachMap. */
     collectBatteryAndUnreachMappings(nodes, prefix) {
         for (const node of nodes) {
-            const relId = prefix ? `${prefix}.${node.id}` : node.id;
+            const relId = prefix ? `${prefix}.${node.label}` : node.label;
             const cfg = node.config ?? {};
             if (cfg.batteriebetrieben && cfg.dpBatterie) {
                 this.dpToLowBatMap.set(cfg.dpBatterie, `${relId}.lowBat`);
@@ -478,7 +478,7 @@ class Faut extends utils.Adapter {
      */
     collectDpMappings(nodes, prefix) {
         for (const node of nodes) {
-            const relId = prefix ? `${prefix}.${node.id}` : node.id;
+            const relId = prefix ? `${prefix}.${node.label}` : node.label;
             const cfg = node.config ?? {};
             if (node.type === 'Temperatur') {
                 if (cfg.dpTemperatur)
@@ -534,7 +534,7 @@ class Faut extends utils.Adapter {
     /** Walks the tree and populates roomEntries / dpToRoomsMotion / dpToRoomsLux. */
     collectRoomConfigs(nodes, prefix, globalLuxDpId) {
         for (const node of nodes) {
-            const relId = prefix ? `${prefix}.${node.id}` : node.id;
+            const relId = prefix ? `${prefix}.${node.label}` : node.label;
             const cfg = node.config ?? {};
             if (node.type === 'Raum' && (cfg.bewegungserkennung || cfg.dunkelheitserkennung || cfg.lichtsteuerung)) {
                 const motionDpIds = [];
@@ -584,7 +584,7 @@ class Faut extends utils.Adapter {
      */
     collectLampConfigs(nodes, prefix, parentRoomRelId) {
         for (const node of nodes) {
-            const relId = prefix ? `${prefix}.${node.id}` : node.id;
+            const relId = prefix ? `${prefix}.${node.label}` : node.label;
             const cfg = node.config ?? {};
             if (node.type === 'Raum') {
                 // New room context: pass this room as parent if lichtsteuerung is enabled
@@ -943,7 +943,7 @@ class Faut extends utils.Adapter {
     /** Collects all Sonne node relIds from the tree. */
     collectSunNodes(nodes, prefix) {
         for (const node of nodes) {
-            const relId = prefix ? `${prefix}.${node.id}` : node.id;
+            const relId = prefix ? `${prefix}.${node.label}` : node.label;
             if (node.type === 'Sonne')
                 this.sunNodeRelIds.push(relId);
             if (node.children?.length)
@@ -1020,7 +1020,7 @@ class Faut extends utils.Adapter {
     /** Walks the tree and populates climateRooms + heizungRelId. */
     collectClimateData(nodes, prefix) {
         for (const node of nodes) {
-            const relId = prefix ? `${prefix}.${node.id}` : node.id;
+            const relId = prefix ? `${prefix}.${node.label}` : node.label;
             const cfg = node.config ?? {};
             if (node.type === 'Heizung' && this.heizungRelId === null) {
                 this.heizungRelId = relId;
@@ -1118,7 +1118,7 @@ class Faut extends utils.Adapter {
     /** Finds a node in the tree by its relId. */
     findNodeByRelId(nodes, targetRelId, prefix = '') {
         for (const node of nodes) {
-            const relId = prefix ? `${prefix}.${node.id}` : node.id;
+            const relId = prefix ? `${prefix}.${node.label}` : node.label;
             if (relId === targetRelId)
                 return node;
             if (node.children?.length) {
@@ -1133,7 +1133,7 @@ class Faut extends utils.Adapter {
     /** Walks the tree and populates consumptionConfigs + consumptionDpToTrackers. */
     collectConsumptionConfigs(nodes, prefix) {
         for (const node of nodes) {
-            const relId = prefix ? `${prefix}.${node.id}` : node.id;
+            const relId = prefix ? `${prefix}.${node.label}` : node.label;
             const cfg = node.config ?? {};
             if (node.type === 'Energie') {
                 if (cfg.dpStromzaehlerStand && !this.consumptionConfigs.has('grid')) {
@@ -1556,7 +1556,7 @@ class Faut extends utils.Adapter {
     /** Walks the tree and fills energieVerbrauchDpId + wechselrichterPowerDps + batterieDps. */
     collectEnergyData(nodes, prefix) {
         for (const node of nodes) {
-            const relId = prefix ? `${prefix}.${node.id}` : node.id;
+            const relId = prefix ? `${prefix}.${node.label}` : node.label;
             const cfg = node.config ?? {};
             if (node.type === 'Energie' && cfg.dpStromzaehlerVerbrauch && this.energieVerbrauchDpId === null) {
                 this.energieVerbrauchDpId = cfg.dpStromzaehlerVerbrauch;
@@ -1678,17 +1678,20 @@ class Faut extends utils.Adapter {
         await this.setStateAsync('global.solarpower', { val: total, ack: true });
     }
     // ---- shutter control ----
-    /** Builds relIdToLabel from the tree (full label path per node). */
-    buildLabelMap(nodes, prefix, labelPrefix) {
+    /**
+     * Builds relIdToLabel from the tree.
+     * Since relId now uses node.label as path segment, relId == the human-readable path.
+     * We still populate the map for backward-compatible labelFor() calls.
+     */
+    buildLabelMap(nodes, prefix, _labelPrefix) {
         for (const node of nodes) {
-            const relId = prefix ? `${prefix}.${node.id}` : node.id;
-            const labelPath = labelPrefix ? `${labelPrefix}.${node.label}` : node.label;
-            this.relIdToLabel.set(relId, labelPath);
+            const relId = prefix ? `${prefix}.${node.label}` : node.label;
+            this.relIdToLabel.set(relId, relId);
             if (node.children?.length)
-                this.buildLabelMap(node.children, relId, labelPath);
+                this.buildLabelMap(node.children, relId, relId);
         }
     }
-    /** Returns the human-readable label path for a relId, or the relId itself as fallback. */
+    /** Returns the human-readable label path for a relId (now identical since relId uses labels). */
     labelFor(relId) {
         return this.relIdToLabel.get(relId) ?? relId;
     }
@@ -2161,7 +2164,7 @@ class Faut extends utils.Adapter {
     /** Walks the tree and populates shutterRooms for rooms with rolladensteuerung=true. */
     collectShutterRooms(nodes, prefix) {
         for (const node of nodes) {
-            const relId = prefix ? `${prefix}.${node.id}` : node.id;
+            const relId = prefix ? `${prefix}.${node.label}` : node.label;
             const cfg = node.config ?? {};
             if (node.type === 'Raum' && cfg.rolladensteuerung) {
                 const rolladenRelIds = [];
@@ -2244,7 +2247,7 @@ class Faut extends utils.Adapter {
      */
     async processTreeNodes(nodes, prefix, expectedIds) {
         for (const node of nodes) {
-            const relId = prefix ? `${prefix}.${node.id}` : node.id;
+            const relId = prefix ? `${prefix}.${node.label}` : node.label;
             expectedIds.add(relId);
             await this.extendObjectAsync(relId, {
                 type: 'folder',
@@ -2252,7 +2255,7 @@ class Faut extends utils.Adapter {
                     name: node.label,
                 },
                 native: {
-                    fautNodeId: node.id,
+                    fautNodeId: node.id, // original node-{timestamp} stored for reference
                     fautNodeType: node.type,
                 },
             });

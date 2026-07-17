@@ -212,7 +212,32 @@ function clearAussentemperatursensor(nodes: FautTreeNode[], exceptId: string): F
     });
 }
 
-// ---- component ----
+/** Returns sibling labels for a given parent (or root-level labels when parentId is null). */
+function getSiblingLabels(nodes: FautTreeNode[], parentId: string | null, excludeId?: string): string[] {
+    if (parentId === null) {
+        return nodes.filter(n => n.id !== excludeId).map(n => n.label.toLowerCase());
+    }
+    for (const node of nodes) {
+        if (node.id === parentId) {
+            return (node.children ?? []).filter(n => n.id !== excludeId).map(n => n.label.toLowerCase());
+        }
+        if (node.children) {
+            const result = getSiblingLabels(node.children, parentId, excludeId);
+            if (result.length >= 0 && parentId !== null) {
+                // recurse deeper only if found
+                const parent = node.children.find(c => c.id === parentId);
+                if (parent) return result;
+            }
+        }
+    }
+    return [];
+}
+
+/** Validates that a label contains no dots (path separator). */
+function isValidLabel(label: string): boolean {
+    return label.trim().length > 0 && !label.includes('.');
+}
+
 
 export default function TabGrundstueck({ native, socket, theme, onChange, instance, adapterName }: TabGrundstueckProps): React.JSX.Element {
     const [tree, setTree] = useState<FautTreeNode[]>(() =>
@@ -225,10 +250,12 @@ export default function TabGrundstueck({ native, socket, theme, onChange, instan
     const [selectedType, setSelectedType] = useState<FautNodeType | ''>('');
     const [nodeLabel, setNodeLabel] = useState('');
     const [labelEdited, setLabelEdited] = useState(false);
+    const [addLabelError, setAddLabelError] = useState<string | null>(null);
 
     // rename state
     const [renaming, setRenaming] = useState(false);
     const [renameValue, setRenameValue] = useState('');
+    const [renameLabelError, setRenameLabelError] = useState<string | null>(null);
 
     const selectedNode = selectedId ? findNode(tree, selectedId) : null;
     const parentKey: 'root' | FautNodeType = selectedNode ? selectedNode.type : 'root';
@@ -251,10 +278,21 @@ export default function TabGrundstueck({ native, socket, theme, onChange, instan
 
     const handleAdd = (): void => {
         if (!selectedType || !nodeLabel.trim()) return;
-        const newNode: FautTreeNode = { id: `node-${Date.now()}`, type: selectedType, label: nodeLabel.trim() };
+        const trimmed = nodeLabel.trim();
+        if (!isValidLabel(trimmed)) {
+            setAddLabelError(I18n.t('Name darf keinen Punkt enthalten'));
+            return;
+        }
+        const siblings = getSiblingLabels(tree, selectedId);
+        if (siblings.includes(trimmed.toLowerCase())) {
+            setAddLabelError(I18n.t('Name bereits vorhanden'));
+            return;
+        }
+        const newNode: FautTreeNode = { id: `node-${Date.now()}`, type: selectedType, label: trimmed };
         const newTree = addNodeUnder(tree, selectedId, newNode);
         setTree(newTree);
         onChange('grundstueck', newTree);
+        setAddLabelError(null);
         setDialogOpen(false);
     };
 
@@ -263,18 +301,35 @@ export default function TabGrundstueck({ native, socket, theme, onChange, instan
     const handleStartRename = (): void => {
         if (!selectedNode) return;
         setRenameValue(selectedNode.label);
+        setRenameLabelError(null);
         setRenaming(true);
     };
 
     const handleConfirmRename = (): void => {
         if (!selectedNode || !renameValue.trim()) return;
-        const newTree = renameNode(tree, selectedNode.id, renameValue.trim());
+        const trimmed = renameValue.trim();
+        if (!isValidLabel(trimmed)) {
+            setRenameLabelError(I18n.t('Name darf keinen Punkt enthalten'));
+            return;
+        }
+        const parent = findParentNode(tree, selectedNode.id);
+        const parentId = parent ? parent.id : null;
+        const siblings = getSiblingLabels(tree, parentId, selectedNode.id);
+        if (siblings.includes(trimmed.toLowerCase())) {
+            setRenameLabelError(I18n.t('Name bereits vorhanden'));
+            return;
+        }
+        const newTree = renameNode(tree, selectedNode.id, trimmed);
         setTree(newTree);
         onChange('grundstueck', newTree);
+        setRenameLabelError(null);
         setRenaming(false);
     };
 
-    const handleCancelRename = (): void => setRenaming(false);
+    const handleCancelRename = (): void => {
+        setRenameLabelError(null);
+        setRenaming(false);
+    };
 
     const dialogTitle = selectedNode
         ? `${I18n.t('Add under')} "${selectedNode.label}"`
@@ -321,7 +376,7 @@ export default function TabGrundstueck({ native, socket, theme, onChange, instan
                             {renaming ? (
                                 <TextField
                                     value={renameValue}
-                                    onChange={e => setRenameValue(e.target.value)}
+                                    onChange={e => { setRenameValue(e.target.value); setRenameLabelError(null); }}
                                     onKeyDown={e => {
                                         if (e.key === 'Enter') handleConfirmRename();
                                         if (e.key === 'Escape') handleCancelRename();
@@ -329,6 +384,8 @@ export default function TabGrundstueck({ native, socket, theme, onChange, instan
                                     size="small"
                                     autoFocus
                                     sx={{ flexGrow: 1 }}
+                                    error={!!renameLabelError}
+                                    helperText={renameLabelError ?? undefined}
                                     InputProps={{
                                         endAdornment: (
                                             <InputAdornment position="end">
@@ -548,8 +605,10 @@ export default function TabGrundstueck({ native, socket, theme, onChange, instan
                         label={I18n.t('Name')}
                         fullWidth
                         value={nodeLabel}
-                        onChange={e => { setNodeLabel(e.target.value); setLabelEdited(true); }}
+                        onChange={e => { setNodeLabel(e.target.value); setLabelEdited(true); setAddLabelError(null); }}
                         onKeyDown={e => e.key === 'Enter' && handleAdd()}
+                        error={!!addLabelError}
+                        helperText={addLabelError ?? undefined}
                     />
                 </DialogContent>
                 <DialogActions>

@@ -14,7 +14,7 @@ import { type FautNodeConfig, type FautTreeNode } from '../types/treeTypes';
 
 function buildLabelMap(nodes: FautTreeNode[], prefix: string, parentLabel: string, out: Map<string, string>): void {
     for (const node of nodes) {
-        const relId = prefix ? `${prefix}.${node.id}` : node.id;
+        const relId = prefix ? `${prefix}.${node.label}` : node.label;
         const label = parentLabel ? `${parentLabel} › ${node.label}` : node.label;
         out.set(relId, label);
         if (node.children?.length) buildLabelMap(node.children, relId, label, out);
