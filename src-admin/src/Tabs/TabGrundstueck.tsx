@@ -62,6 +62,7 @@ import LampeDetailPanel from '../components/LampeDetailPanel';
 import HeizungDetailPanel from '../components/HeizungDetailPanel';
 import EnergieDetailPanel from '../components/EnergieDetailPanel';
 import EnergyNodeDetailPanel from '../components/EnergyNodeDetailPanel';
+import ThermostatDetailPanel from '../components/ThermostatDetailPanel';
 
 // ---- icon map ----
 
@@ -454,6 +455,20 @@ export default function TabGrundstueck({ native, socket, theme, onChange, instan
                         {selectedNode.type === 'Raum' && (
                             <RaumDetailPanel
                                 node={selectedNode}
+                                onConfigChange={(key, value) => {
+                                    const newTree = updateNodeConfig(tree, selectedNode.id, key, value);
+                                    setTree(newTree);
+                                    onChange('grundstueck', newTree);
+                                }}
+                            />
+                        )}
+
+                        {/* Thermostat config */}
+                        {selectedNode.type === 'Thermostat' && (
+                            <ThermostatDetailPanel
+                                node={selectedNode}
+                                socket={socket}
+                                theme={theme}
                                 onConfigChange={(key, value) => {
                                     const newTree = updateNodeConfig(tree, selectedNode.id, key, value);
                                     setTree(newTree);

@@ -2353,6 +2353,12 @@ class Faut extends utils.Adapter {
             specs.push({ id: 'elevation', name: 'Elevation', dataType: 'number', role: 'value', unit: '°' });
             specs.push({ id: 'azimuth', name: 'Azimuth', dataType: 'number', role: 'value', unit: '°' });
         }
+        else if (nodeType === 'Thermostat') {
+            if (cfg.dpThermostatTemperatur)
+                specs.push({ id: 'temperature', name: 'Temperature', dataType: 'number', role: 'value.temperature', unit: '\u00b0C' });
+            if (cfg.dpThermostatSolltemperatur)
+                specs.push({ id: 'setpoint', name: 'Setpoint', dataType: 'number', role: 'level.temperature', unit: '\u00b0C', write: true });
+        }
         else if (nodeType === 'Rolladen') {
             specs.push({ id: 'state', name: 'State', dataType: 'string', role: 'text', def: 'open', write: true,
                 states: { open: 'Open', closed: 'Closed', sunblock: 'Sunblock', heatblock: 'Heatblock', manual: 'Manual' },

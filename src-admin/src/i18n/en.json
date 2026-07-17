@@ -121,5 +121,7 @@
     "Name bereits vorhanden": "Name already exists",
     "Name darf keinen Punkt enthalten": "Name must not contain a dot (.)",
     "Bool Unreach": "Bool Unreach",
-    "Alive State": "Alive State"
+    "Alive State": "Alive State",
+    "DP Thermostat Temperature": "DP Temperature",
+    "DP Thermostat Setpoint": "DP Setpoint"
 }

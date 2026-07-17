@@ -207,6 +207,9 @@ export interface FautNodeConfig {
     telegramSilentNachtmodus?: boolean;
     alexaMultiroomGruppe?: string;
     alexaRaumspezifischAktiv?: boolean;
+    // Thermostat actor
+    dpThermostatTemperatur?: string;
+    dpThermostatSolltemperatur?: string;
 }
 
 // ---- Tree node ----

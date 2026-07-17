@@ -72,6 +72,9 @@ export interface FautNodeConfig {
     dpErreichbarkeit?: string;
     dpUnreachIsBool?: boolean;   // DP value IS the unreach state directly (true = unreachable)
     dpUnreachIsAlive?: boolean;  // DP is an alive/reachable signal (negated: true = reachable)
+    // Thermostat actor
+    dpThermostatTemperatur?: string;
+    dpThermostatSolltemperatur?: string;
     // Raum-specific
     bewegungserkennung?: boolean;
     bewegungsCooldown?: number;
