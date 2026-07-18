@@ -212,6 +212,10 @@ class Faut extends utils.Adapter {
 	private readonly consumptionAnchors   = new Map<string, TrackerAnchors>();
 	/** Consumption history: midnight rollover timer. */
 	private consumptionMidnightTimer: ReturnType<typeof setTimeout> | null = null;
+	/** Maps roomRelId → Alexa DP paths (dpAlexa) of Alexa nodes in that room. */
+	private readonly roomToAlexaDps  = new Map<string, string[]>();
+	/** Resident DP prefixes (e.g. 'residents.0.roomie.henning') from Person nodes. */
+	private readonly personResidentDps: string[] = [];
 	/** In-memory message list (persisted to global.messages as JSON). */
 	private messages: FautMessage[] = [];
 	/** Periodic timer for checking message expiry. */
@@ -426,6 +430,8 @@ class Faut extends utils.Adapter {
 		this.buildLabelMap(tree, '', '');
 		this.collectDpMappings(tree, '');
 		this.collectBatteryAndUnreachMappings(tree, '');
+		this.collectAlexaMappings(tree, '', null);
+		this.collectPersonMappings(tree, '');
 
 		const hasAnyDp = this.dpToStateMap.size > 0 || this.dpToLowBatMap.size > 0 || this.dpToUnreachMap.size > 0;
 		if (!hasAnyDp) {
@@ -475,6 +481,40 @@ class Faut extends utils.Adapter {
 				}
 			}
 			if (node.children?.length) this.collectBatteryAndUnreachMappings(node.children, relId);
+		}
+	}
+
+	/**
+	 * Walks the tree and fills roomToAlexaDps (roomRelId → Alexa DP paths).
+	 * parentRoomRelId tracks the nearest ancestor Raum node.
+	 */
+	private collectAlexaMappings(nodes: FautTreeNode[], prefix: string, parentRoomRelId: string | null): void {
+		for (const node of nodes) {
+			const relId = prefix ? `${prefix}.${node.label}` : node.label;
+			const cfg   = (node.config as FautNodeConfig | undefined) ?? {};
+
+			if (node.type === 'Alexa' && cfg.dpAlexa && parentRoomRelId) {
+				const existing = this.roomToAlexaDps.get(parentRoomRelId) ?? [];
+				existing.push(cfg.dpAlexa);
+				this.roomToAlexaDps.set(parentRoomRelId, existing);
+			}
+
+			if (node.children?.length) {
+				const newParent = node.type === 'Raum' ? relId : parentRoomRelId;
+				this.collectAlexaMappings(node.children, relId, newParent);
+			}
+		}
+	}
+
+	/** Walks the tree and collects dpResident values from Person nodes. */
+	private collectPersonMappings(nodes: FautTreeNode[], prefix: string): void {
+		for (const node of nodes) {
+			const relId = prefix ? `${prefix}.${node.label}` : node.label;
+			const cfg   = (node.config as FautNodeConfig | undefined) ?? {};
+			if (node.type === 'Person' && cfg.dpResident) {
+				this.personResidentDps.push(cfg.dpResident);
+			}
+			if (node.children?.length) this.collectPersonMappings(node.children, relId);
 		}
 	}
 
@@ -2635,6 +2675,7 @@ class Faut extends utils.Adapter {
 		this.messages.push(msg);
 		this.saveMessages().catch(e => this.log.error(`saveMessages failed: ${(e as Error).message}`));
 		this.sendTelegramMessage(msg).catch(e => this.log.warn(`Telegram send failed: ${(e as Error).message}`));
+		this.sendAlexaMessage(msg).catch(e => this.log.warn(`Alexa send failed: ${(e as Error).message}`));
 	}
 
 	/**
@@ -2715,6 +2756,92 @@ class Faut extends utils.Adapter {
 		const prefix = msg.severity === 'error' ? '[ERROR]' : msg.severity === 'warning' ? '[WARN]' : '[INFO]';
 		const text   = `${prefix} ${msg.message}`;
 		this.sendTo(instanz, 'send', { text });
+	}
+
+	/**
+	 * Returns true if at least one resident (from Person nodes) is currently home.
+	 * Uses residents.0.roomie.{name}.presence.home boolean.
+	 */
+	private async isAnyoneHome(): Promise<boolean> {
+		if (this.personResidentDps.length === 0) return false;
+		for (const dp of this.personResidentDps) {
+			try {
+				const st = await this.getForeignStateAsync(`${dp}.presence.home`);
+				if (st?.val === true) return true;
+			} catch { /* ignore */ }
+		}
+		return false;
+	}
+
+	/**
+	 * Formats a FautMessage message string for Alexa TTS output.
+	 * Converts e.g. "Haus.Obergeschoss.Badezimmer.Bewegung: Nicht erreichbar"
+	 * to "Bewegung in Badezimmer ist nicht erreichbar".
+	 */
+	private formatAlexaMessage(message: string): string {
+		const colonIdx = message.indexOf(':');
+		if (colonIdx === -1) return message;
+		const path   = message.substring(0, colonIdx).trim();
+		const action = message.substring(colonIdx + 1).trim();
+		const parts  = path.split('.');
+		if (parts.length >= 2) {
+			const device = parts[parts.length - 1];
+			const room   = parts[parts.length - 2];
+			return `${device} in ${room} ist ${action.toLowerCase()}`;
+		}
+		return `${parts[parts.length - 1] ?? path} ist ${action.toLowerCase()}`;
+	}
+
+	/**
+	 * Sends an Alexa TTS announcement for a new message.
+	 * Sends to rooms where presence = present|cooldown (if alexaRaumspezifischAktiv),
+	 * falls back to the global multiroom group if no room-specific device is found.
+	 */
+	private async sendAlexaMessage(msg: FautMessage): Promise<void> {
+		// 1. Night mode check: never speak during night mode
+		try {
+			const nightSt = await this.getStateAsync('global.nightMode');
+			if (nightSt?.val === true) return;
+		} catch { /* ignore */ }
+
+		// 2. Resident presence check: skip if nobody is home
+		if (!await this.isAnyoneHome()) return;
+
+		// 3. Format message for TTS
+		const text = this.formatAlexaMessage(msg.message);
+
+		// 4. Collect target Alexa DPs from rooms with active presence
+		const targetDps: string[] = [];
+		if (this.config.alexaRaumspezifischAktiv !== false) {
+			for (const [roomRelId] of this.roomEntries) {
+				try {
+					const presenceSt = await this.getStateAsync(`${roomRelId}.presence`);
+					if (presenceSt?.val === 'present' || presenceSt?.val === 'cooldown') {
+						const alexaDps = this.roomToAlexaDps.get(roomRelId) ?? [];
+						targetDps.push(...alexaDps);
+					}
+				} catch { /* ignore */ }
+			}
+		}
+
+		// 5. Fallback to global multiroom group
+		if (targetDps.length === 0) {
+			const globalGroup = (this.config.alexaMultiroomGruppe as string | undefined) ?? '';
+			if (globalGroup) targetDps.push(globalGroup);
+		}
+
+		if (targetDps.length === 0) return;
+
+		// 6. Send volume + speak to each Alexa device DP
+		for (const dp of targetDps) {
+			try {
+				await this.setForeignStateAsync(`${dp}.Player.volume`, { val: 3, ack: false });
+				await this.setForeignStateAsync(`${dp}.Commands.speak`, { val: text, ack: false });
+				this.logAlexa(`Spoke on ${dp}: ${text}`);
+			} catch (e) {
+				this.log.warn(`Alexa speak failed for ${dp}: ${(e as Error).message}`);
+			}
+		}
 	}
 
 	/**
