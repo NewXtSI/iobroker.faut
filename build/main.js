@@ -2590,8 +2590,15 @@ class Faut extends utils.Adapter {
         const colonIdx = message.indexOf(':');
         if (colonIdx === -1)
             return message;
-        const path = message.substring(0, colonIdx).trim();
+        let path = message.substring(0, colonIdx).trim();
         const action = message.substring(colonIdx + 1).trim();
+        // Strip known technical state suffixes that are not meaningful for TTS
+        for (const suffix of ['.unreach', '.lowBat', '.restored']) {
+            if (path.endsWith(suffix)) {
+                path = path.slice(0, -suffix.length);
+                break;
+            }
+        }
         const parts = path.split('.');
         if (parts.length >= 2) {
             const device = parts[parts.length - 1];
